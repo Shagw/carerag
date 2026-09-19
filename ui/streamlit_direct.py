@@ -24,7 +24,25 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
 
-# Import the backend logic DIRECTLY (no HTTP).
+# ---------------------------------------------------------------------------
+# Bridge Streamlit Cloud secrets -> environment variables.
+#
+# On Streamlit Community Cloud there is no .env file; you enter secrets in the
+# app's Secrets box. Our app/config.py reads settings from ENVIRONMENT VARIABLES
+# at import time, so we copy any st.secrets into os.environ BEFORE importing the
+# `app` package below. (Locally, st.secrets is usually empty and this does
+# nothing — the local .env is used instead.)
+# ---------------------------------------------------------------------------
+try:
+    for _key, _value in st.secrets.items():
+        # Only set if not already provided by the real environment.
+        os.environ.setdefault(_key, str(_value))
+except Exception:
+    # No secrets configured (e.g. local dev) — fine, config.py will use .env.
+    pass
+
+# Import the backend logic DIRECTLY (no HTTP). Must come AFTER the secrets
+# bridge above, because importing app.config reads the environment immediately.
 from app.pdf_utils import extract_pages
 from app.chunking import chunk_pages
 from app.vector_store import save_chunks, list_documents

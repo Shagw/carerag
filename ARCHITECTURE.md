@@ -14,35 +14,38 @@ This document shows how the pieces connect. Pair it with `PLAN.md` (which explai
                  │ upload PDF(s)                       │ ask question
                  ▼                                     ▼
  ┌──────────────────────────────────────────────────────────────────────────┐
- │                            FastAPI backend                                 │
+ │                       Backend logic (FastAPI or direct)                    │
  │                                                                            │
- │   POST /upload                         POST /ask                           │
+ │   upload flow                          ask flow                            │
  │   ┌───────────────────────┐            ┌────────────────────────────────┐ │
- │   │ 1. read PDF (PyMuPDF) │            │ 1. embed question (LOCAL model)│ │
+ │   │ 1. read PDF (PyMuPDF) │            │ 1. embed question (Gemini API) │ │
  │   │ 2. chunk text         │            │ 2. vector search top-k chunks  │ │
- │   │ 3. embed each chunk   │            │ 3. strict "I don't know" guard │ │
- │   │    (LOCAL model)      │            │ 4. build prompt (+ chat history)│ │
+ │   │ 3. embed chunks       │            │ 3. strict "I don't know" guard │ │
+ │   │    (Gemini API)       │            │ 4. build prompt (+ chat history)│ │
  │   │ 4. store in DB        │            │ 5. Gemini writes answer        │ │
  │   └───────────┬───────────┘            │ 6. attach citations + snippet  │ │
- │               │        embeddings run  │ 7. save to conversations       │ │
- │               │        IN-PROCESS      └───────────────┬────────────────┘ │
- │               │        (no network)                    │                   │
+ │               │                        │ 7. save to conversations       │ │
+ │               │                        └───────────────┬────────────────┘ │
  └───────────────┼─────────────────────────────────────────┼──────────────────┘
-                 │                                          │ uses key_manager
-                 ▼                                          ▼ (rotates 5 keys)
+                 │                                          │ both use key_manager
+                 ▼                                          ▼ (rotates up to 5 keys)
  ┌──────────────────────────────┐            ┌───────────────────────────────┐
  │  Supabase Postgres + pgvector │            │   Google Gemini API           │
- │  ┌────────────┐ ┌───────────┐ │            │   gemini-1.5-flash            │
- │  │ documents  │ │  chunks   │ │            │   (answer text only)          │
- │  │            │ │+vector(384)│ │            │                               │
- │  └────────────┘ └───────────┘ │            │   free tier, up to 5 keys     │
- │  ┌──────────────┐             │            │   with cooldown rotation      │
- │  │conversations │  (history)  │            └───────────────────────────────┘
- │  └──────────────┘             │
+ │  ┌────────────┐ ┌───────────┐ │            │  - gemini-embedding-001 (768) │
+ │  │ documents  │ │  chunks   │ │            │    for embeddings             │
+ │  │            │ │+vector(768)│ │            │  - gemini-flash-latest        │
+ │  └────────────┘ └───────────┘ │            │    for answers                │
+ │  ┌──────────────┐             │            │  free tier, up to 5 keys      │
+ │  │conversations │  (history)  │            │  with cooldown rotation       │
+ │  └──────────────┘             │            └───────────────────────────────┘
  └──────────────────────────────┘
 
- NOTE: The embedding model (all-MiniLM-L6-v2) runs INSIDE the FastAPI process — it is NOT a
- separate service. Only the database (Supabase) and the answer LLM (Gemini) are remote.
+ NOTE: Both embeddings AND answers use the remote Gemini API. The app itself is lightweight
+ (no local ML model), so it fits small free hosts. Remote services: Supabase (DB) + Gemini (AI).
+
+ DEPLOYMENT: the same backend logic runs two ways — as a FastAPI service (app/main.py, deployed on
+ Render) OR called in-process by the Streamlit UI (ui/streamlit_direct.py, deployed on Streamlit
+ Community Cloud). Both paths use the identical functions in vector_store / rag / embeddings / llm.
 ```
 
 ---
@@ -54,15 +57,15 @@ This document shows how the pieces connect. Pair it with `PLAN.md` (which explai
 PDF file(s)  (max 10 MB each, text-based)
   → pdf_utils.extract_pages()      # [(page_number, text), ...]
   → chunking.chunk_pages()         # [(page_number, chunk_text), ...]
-  → embeddings.embed_texts()       # LOCAL model → [(chunk_text, vector384), ...]
+  → embeddings.embed_texts()      # Gemini API (batched) → 768-dim vectors
   → vector_store.save_chunks()     # INSERT into documents + chunks tables
 ```
 
 ### Query pipeline (POST /ask) — runs on every question
 ```
 question (+ session_id for memory)
-  → embeddings.embed_texts([question])   # LOCAL model → question vector
-  → vector_store.search(vector, k=5)     # nearest chunks across ALL docs + distances
+  → embeddings.embed_text(question)      # Gemini API → 768-dim question vector
+  → vector_store.search(vector, k, sid)  # nearest chunks in THIS session's docs + distances
   → rag: strict guardrail                # if best distance too large → "I don't know", stop
   → rag.build_prompt(question, chunks,   # prompt with chunk text + recent chat history
                      history)
@@ -70,6 +73,11 @@ question (+ session_id for memory)
   → rag: attach citations                # answer + [doc, page, snippet] list
   → save to conversations                # history + follow-up memory
 ```
+
+> **Per-session isolation:** `search` filters `WHERE documents.session_id = sid` FIRST, then ranks
+> by distance. So chunks from other sessions/chats are never candidates — you can only ever retrieve
+> your own session's documents. (`session_id` is stored on the `documents` table; the UI keeps it in
+> the page URL as `?session=...`.)
 
 ---
 
@@ -79,7 +87,7 @@ question (+ session_id for memory)
 |--------|-------|--------|----------------|
 | `pdf_utils.py` | PDF bytes | list of (page_no, text) | extract text keeping page numbers |
 | `chunking.py`  | (page_no, text) list | (page_no, chunk) list | split into overlapping chunks |
-| `embeddings.py`| list of strings | list of 384-dim vectors | run the LOCAL sentence-transformers model |
+| `embeddings.py`| list of strings | list of 768-dim vectors | call the Gemini embedding API (batched) |
 | `vector_store.py` | chunks / query vector | DB writes / nearest chunks | all DB access for documents & chunks |
 | `key_manager.py` | – | an available API key | rotate up to 5 Gemini keys, cooldown on limit |
 | `llm.py` | prompt string | answer string | call Gemini (asks key_manager for a key) |
@@ -94,8 +102,8 @@ question (+ session_id for memory)
 ## 4. Why this structure is safe and clear
 
 - **Each module has one responsibility** → easy to read and test individually.
-- **Embeddings are local and isolated** in `embeddings.py`; **Gemini is isolated** in `llm.py`
-  (+ `key_manager.py`) → the rest of the code does not care which provider is used.
+- **Embeddings are isolated** in `embeddings.py` (Gemini embedding API); **answers are isolated** in
+  `llm.py` (+ `key_manager.py`) → the rest of the code does not care which provider is used.
 - **All database SQL lives in `vector_store.py` / `database.py`** → one place to look.
 - **Citations are guaranteed** because page number + chunk text travel from extraction all the way
   to the answer, so we can always show document + page + snippet.
@@ -106,8 +114,8 @@ question (+ session_id for memory)
 ## 5. Data flow for a single question (concrete example)
 
 1. User asks: *"What is the claim submission deadline?"*
-2. We embed that sentence with the LOCAL model → `[0.01, -0.23, ...]` (**384** numbers).
-3. pgvector finds the 5 chunks with the smallest cosine distance across ALL uploaded documents.
+2. We embed that sentence via the Gemini embedding API → `[0.01, -0.23, ...]` (**768** numbers).
+3. pgvector finds the 5 chunks with the smallest cosine distance within THIS session's documents.
 4. Suppose the best chunk (distance 0.18) is from `policy.pdf` page 12 and says
    *"Claims must be submitted within 30 days of discharge."*
 5. Strict guard: 0.18 is below our threshold → relevant, so we proceed (if it were too large we'd
@@ -120,26 +128,33 @@ question (+ session_id for memory)
 
 ---
 
-## 6. How local embeddings work when deployed
+## 6. Why Gemini embeddings, and how it deploys
 
-"Local" does **not** mean "only your laptop". It means the embedding model runs *inside the app's own
-Python process*, wherever that app runs.
+Originally CareRAG used a **local** embedding model (`all-MiniLM-L6-v2`) that ran inside the app's
+own process. That was appealing (no API key, no per-call cost), but it depends on **PyTorch**, which
+uses **~300+ MB of RAM**. On the free deployment host (Render, 512 MB limit) that caused an
+**out-of-memory crash** on startup.
+
+The fix was to switch embeddings to the **Gemini embedding API** (`gemini-embedding-001`, requested
+at **768 dimensions**). The heavy PyTorch dependency is gone, so the app is small and deploys on free
+tiers. Trade-off: embeddings now require a network call (and the free Gemini quota), but we batch all
+of a document's chunks into **one** call to keep it fast.
 
 ```
-Hugging Face Space (one free container, 16 GB RAM)
+Deployed app process (Streamlit Cloud OR Render — lightweight, no ML model)
 ┌─────────────────────────────────────────────────────┐
-│  FastAPI app process                                  │
-│    model = SentenceTransformer("all-MiniLM-L6-v2")   │  ← downloaded once at startup (~90 MB)
-│    vector = model.encode(text)                        │  ← runs here in RAM, CPU, free, no network
-│         │                                              │
-│         ▼ store / search vectors over the network      │
-│   Supabase Postgres (pgvector)  ← the only remote data store
-│                                                        │
-│    answer = gemini.generate(prompt)  ← remote API call, only for the final answer text
+│  embeddings.embed_texts(chunks)  ── HTTPS ─▶ Gemini embedding API (768-dim)
+│  llm.generate(prompt)            ── HTTPS ─▶ Gemini answer API
+│  vector_store / conversations    ── SQL   ─▶ Supabase Postgres (pgvector)
 └─────────────────────────────────────────────────────┘
 ```
 
-- No embedding API key, no per-call cost, no daily limit for embeddings.
-- The same model is used for both storing documents and searching questions, so vectors are
-  comparable.
-- Only two things are remote: the **database** (Supabase) and the **answer LLM** (Gemini).
+**Two deployment shapes, same code:**
+- **Streamlit Community Cloud** runs `ui/streamlit_direct.py`, which imports and calls the backend
+  functions directly (one process, no HTTP). This is the deployed chat UI.
+- **Render** runs `app/main.py` with uvicorn as a FastAPI service (gives `/docs`). The HTTP UI
+  (`ui/streamlit_app.py`) can point at it.
+
+**Key rule (unchanged):** the same embedding model must be used to store documents AND to search
+questions, so vectors are comparable. We use `gemini-embedding-001` (768-dim) for both — with
+`task_type=retrieval_document` when storing chunks and `retrieval_query` when embedding a question.

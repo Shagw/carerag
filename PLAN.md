@@ -83,21 +83,30 @@ no paid hosting, no credit card. Here is the locked-in free stack and why each p
 | API / backend | **FastAPI** (Python) | Fast to write, automatic interactive docs at `/docs`, great for beginners. |
 | Database | **Supabase Postgres + pgvector** | Free tier Postgres with the pgvector extension already available. One tool for storage + vector search. |
 | PDF reading | **PyMuPDF** | Extracts text *and* tells us the page number of each piece of text (needed for citations!). |
-| Embeddings | **Local `sentence-transformers` (`all-MiniLM-L6-v2`, 384 dims)** | Runs *inside* our own app — no API key, no cost, no daily limit, works offline. ~90 MB model, CPU only. |
-| Answer generation | **Google Gemini `gemini-1.5-flash`** | Google's free-tier API. Free key from aistudio.google.com, no credit card. Only used for writing the final answer text. |
+| Embeddings | **Google Gemini `gemini-embedding-001` (768 dims)** | Free-tier embedding API. Runs server-side, so our app stays tiny and fits small free hosts. |
+| Answer generation | **Google Gemini `gemini-flash-latest`** | Google's free-tier API. Free key from aistudio.google.com, no credit card. Writes the final answer text. |
 | UI | **Streamlit** | Simplest possible chat UI in pure Python. No React/JS needed. Great for a 2-day build. |
-| Deploy | **Hugging Face Spaces** (free) | Free container (16 GB RAM) that can host the app. One public URL to put on your CV. |
-| Packaging | **Docker** (optional) | Makes it run anywhere the same way. Only if time permits. |
+| Deploy | **Streamlit Community Cloud** (UI) + **Render** (API) | Both free, no credit card. One public chat URL for your CV. |
 
 > **Why Streamlit over React?** Saves ~a full day of frontend work. The instructions allow either.
 >
-> **Why local embeddings?** "Local" means the tiny model runs inside our own Python process
-> wherever the app is deployed — not just on the laptop. No API key, no per-call cost, and search
-> keeps working even if the Gemini free quota runs out. See `ARCHITECTURE.md` §6 for how this works
-> when deployed.
+> **Why Gemini embeddings (not a local model)?** We originally used a local
+> `sentence-transformers` model (no API key, runs in-process). But it pulls in **PyTorch (~300+ MB
+> RAM)**, which **exceeded the 512 MB limit** of the free host (Render) and caused out-of-memory
+> crashes. Switching to Gemini's embedding API removed that heavy dependency, so the app is
+> lightweight and deploys for free. This is a real design trade-off we discovered during
+> deployment — see the "Design evolution" note below.
 >
 > **Key rule:** the *same* embedding model must be used to store documents AND to search questions,
-> otherwise the vectors are not comparable. We use local `all-MiniLM-L6-v2` for both.
+> otherwise the vectors are not comparable. We use Gemini `gemini-embedding-001` (768-dim) for both,
+> with `task_type` set to `retrieval_document` when storing and `retrieval_query` when searching.
+
+> **Design evolution (honest history):** the project first used local embeddings (384-dim
+> `all-MiniLM-L6-v2`) and planned to deploy on Hugging Face Spaces. During deployment two things
+> changed: (1) HF Spaces made compute tiers paid, so we moved the UI to **Streamlit Community Cloud**
+> and the API to **Render**; (2) the local model's PyTorch dependency blew past Render's 512 MB free
+> RAM, so we switched to the **Gemini embedding API (768-dim)**. The code, DB dimension, and these
+> docs all reflect the final Gemini-based design.
 
 ---
 
@@ -108,7 +117,7 @@ carerag/
 ├── PLAN.md                  ← this document
 ├── README.md                ← how to run it (written last)
 ├── ARCHITECTURE.md          ← diagram + explanation
-├── DEPLOYMENT.md            ← free hosting steps (Supabase + HF Spaces)
+├── DEPLOYMENT.md            ← free hosting steps (Supabase + Render/Streamlit Cloud)
 ├── .env.example             ← TEMPLATE for secrets (names + placeholders only)
 ├── .env                     ← YOUR real secrets — you create it, never committed
 ├── .gitignore               ← ensures .env is never pushed to GitHub
@@ -122,7 +131,7 @@ carerag/
 │   ├── models.py            ← the shapes of data (Pydantic request/response)
 │   ├── pdf_utils.py         ← extract text + page numbers from PDF (PyMuPDF)
 │   ├── chunking.py          ← split text into overlapping chunks
-│   ├── embeddings.py        ← turn text into vectors (LOCAL sentence-transformers)
+│   ├── embeddings.py        ← turn text into vectors (Gemini embedding API, 768-dim)
 │   ├── vector_store.py      ← save chunks & run similarity search (pgvector)
 │   ├── key_manager.py       ← rotates up to 5 Gemini API keys with cooldown
 │   ├── llm.py               ← call Gemini to generate the answer (uses key_manager)
@@ -144,11 +153,13 @@ Each file does **one job**. This keeps every file short and easy to read.
 
 ## 6. The database design
 
-We support **multiple documents**, and every question searches **across all of them**. Three tables:
+We support **multiple documents**, and a question searches across all of them **within the same
+browser session** (see per-session isolation below). Three tables:
 
 **`documents`** — one row per uploaded PDF.
 ```
 id            (unique id)
+session_id    (which browser session uploaded it — enables per-session isolation)
 filename      (original file name — shown in citations)
 uploaded_at   (timestamp)
 ```
@@ -159,7 +170,7 @@ id            (unique id)
 document_id   (which document this chunk belongs to → the filename for citations)
 page_number   (which page it came from — THIS enables page citations)
 content       (the actual text of the chunk — also shown as the citation snippet)
-embedding     (the vector, type: vector(384))   ← 384 because all-MiniLM-L6-v2 outputs 384 numbers
+embedding     (the vector, type: vector(768))   ← 768 because gemini-embedding-001 outputs 768 numbers
 ```
 
 **`conversations`** — chat history AND follow-up memory.
@@ -173,12 +184,33 @@ created_at    (timestamp)
 ```
 
 Because it's **multiple documents**, supporting them is almost free: upload just adds more rows to
-`chunks`, and search naturally looks across every chunk regardless of document. The citation carries
-the document name so the user sees exactly which file (and page) each answer came from.
+`chunks`, and search looks across every chunk of the current session regardless of which document it
+came from. The citation carries the document name so the user sees exactly which file (and page)
+each answer came from.
 
 The magic query is: *"give me the 5 chunks whose `embedding` is closest to the question's
 embedding"*. pgvector does this with the `<=>` (cosine distance) operator. Smaller distance = closer
 meaning.
+
+### Per-session document isolation (privacy)
+
+Every uploaded document is tagged with a `session_id` (the id of the browser session that uploaded
+it). Three functions filter by it:
+
+- `save_chunks(filename, chunks, session_id)` — stores the document under that session.
+- `search(query_vector, top_k, session_id)` — its SQL has `WHERE documents.session_id = %s`, so the
+  database **discards every chunk from other sessions BEFORE ranking by distance**. A chunk from a
+  different chat is never even a candidate.
+- `list_documents(session_id)` — only lists that session's documents.
+
+So there are **two separate ideas** at query time, and they run in this order:
+1. **`session_id` filter (the WHERE clause)** decides *whose* documents are eligible — a hard
+   boundary. You can never retrieve another session's chunk.
+2. **cosine distance (the ORDER BY)** decides *which* of the eligible chunks match best by meaning.
+
+The `session_id` lives in the page URL (`?session=...`) so a refresh keeps the same session. This is
+a no-login demo, so the isolation is convenience/privacy between sessions, not hard security —
+someone with your exact session URL could load it. That trade-off is documented in the README.
 
 ---
 
@@ -193,7 +225,7 @@ meaning.
 - [ ] 1.2 Connect to Supabase Postgres + create tables (`database.py`) — no Docker
 - [ ] 1.3 `pdf_utils.py`: extract text with page numbers (max 10 MB, text PDFs)
 - [ ] 1.4 `chunking.py`: split text into overlapping chunks (keep page numbers)
-- [ ] 1.5 `embeddings.py`: local `all-MiniLM-L6-v2` encoder (384-dim vectors)
+- [ ] 1.5 `embeddings.py`: Gemini `gemini-embedding-001` encoder (768-dim vectors)
 - [ ] 1.6 `vector_store.py`: save chunks + vectors to DB
 - [ ] 1.7 FastAPI `POST /upload` (multiple files) wiring it all together
 - [ ] 1.8 `vector_store.py`: cosine-similarity search across ALL documents

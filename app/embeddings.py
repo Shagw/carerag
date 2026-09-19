@@ -1,71 +1,97 @@
 # ============================================================================
-# embeddings.py — turn text into "embeddings" (vectors) using a LOCAL model.
+# embeddings.py — turn text into "embeddings" (vectors) using the Gemini API.
 #
-# "Local" means the model runs inside THIS Python process. No API key, no cost,
-# no internet needed after the first download. The model outputs 384 numbers
-# per piece of text — that's why our database column is vector(384).
+# WHY GEMINI (not a local model)? The local sentence-transformers model pulls
+# in PyTorch (~300+ MB RAM), which does not fit on small free hosts (e.g.
+# Render's 512 MB free tier). Gemini's embedding API runs server-side, so our
+# app stays tiny and deploys on free hosting.
+#
+# Model: gemini-embedding-001, requested at 768 dimensions (output_dimensionality)
+# to keep the database lean. That is why our DB column is vector(768).
+#
+# PERFORMANCE: we embed a whole LIST of texts in ONE API call (batching). This
+# makes uploading a big document fast (one request instead of one-per-chunk)
+# and reduces the chance of hitting rate limits.
+#
+# We use task_type to improve retrieval quality:
+#   - "retrieval_document"  when embedding the stored document chunks
+#   - "retrieval_query"     when embedding the user's question
 #
 # Main functions:
-#     embed_texts(["a", "b"])  ->  [[384 numbers], [384 numbers]]   (many texts)
-#     embed_text("a question") ->  [384 numbers]                    (one text)
+#   embed_texts(texts)  -> list of 768-dim vectors (documents, by default)
+#   embed_text(text)    -> one 768-dim vector (query, by default)
 # ============================================================================
 
 from typing import List
 
-# SentenceTransformer is the class that loads and runs the embedding model.
-from sentence_transformers import SentenceTransformer
+import google.generativeai as genai
+
+from app.key_manager import key_manager, AllKeysCoolingDown
 
 
-# The model we use. It's small (~90 MB), fast on CPU, and outputs 384-dim vectors.
-MODEL_NAME = "all-MiniLM-L6-v2"
+# The Gemini embedding model and the dimension we request.
+MODEL_NAME = "models/gemini-embedding-001"
+EMBED_DIM = 768
 
-# We keep the loaded model here so we only load it ONCE and reuse it.
-# It starts as None and gets filled in the first time we need it.
-_model = None
+# Friendly message when every key is rate-limited.
+ALL_KEYS_BUSY = "All AI keys are cooling down, please try again in a minute."
 
 
-def _get_model() -> SentenceTransformer:
+def _looks_like_rate_limit(error: Exception) -> bool:
+    """True if the error is a rate-limit / quota problem."""
+    m = str(error).lower()
+    return "429" in m or "quota" in m or "rate" in m or "exhausted" in m
+
+
+def _embed_batch(texts: List[str], task_type: str) -> List[List[float]]:
     """
-    Return the embedding model, loading it the first time it's needed.
+    Embed a LIST of texts in ONE Gemini call, returning one vector per text.
 
-    This "lazy loading" avoids reloading the ~90 MB model on every call.
-    The first call downloads (once) and loads it; later calls reuse it.
+    Uses the key manager: if a key is rate-limited, cool it down and try the
+    next key. Raises RuntimeError if all keys are cooling down.
     """
-    global _model  # we want to modify the module-level _model variable
+    for _attempt in range(len(key_manager.keys)):
+        try:
+            api_key = key_manager.get_key()
+        except AllKeysCoolingDown:
+            raise RuntimeError(ALL_KEYS_BUSY)
 
-    # Only load if we haven't already.
-    if _model is None:
-        print(f"Loading embedding model '{MODEL_NAME}' (first time may download ~90 MB)...")
-        _model = SentenceTransformer(MODEL_NAME)
-        print("Embedding model loaded.")
+        try:
+            genai.configure(api_key=api_key)
+            result = genai.embed_content(
+                model=MODEL_NAME,
+                content=texts,               # a LIST -> Gemini returns a list of vectors
+                task_type=task_type,
+                output_dimensionality=EMBED_DIM,
+            )
+            return result["embedding"]       # list of 768-dim vectors
+        except Exception as error:
+            if _looks_like_rate_limit(error):
+                key_manager.mark_rate_limited(api_key)
+                continue
+            raise
 
-    return _model
+    raise RuntimeError(ALL_KEYS_BUSY)
 
 
-def embed_texts(texts: List[str]) -> List[List[float]]:
+def embed_texts(texts: List[str], task_type: str = "retrieval_document") -> List[List[float]]:
     """
-    Turn a LIST of strings into a LIST of vectors (one vector per string).
+    Turn a LIST of strings into a LIST of 768-dim vectors, in one batch call.
 
-    Used at upload time to embed all the chunks of a document at once
-    (embedding in a batch is faster than one at a time).
+    Defaults to "retrieval_document" because this is used at upload time to
+    embed the document chunks we store.
     """
-    model = _get_model()
-
-    # model.encode(...) does the actual work.
-    #   normalize_embeddings=True  -> scale each vector to length 1, which makes
-    #                                 cosine similarity search behave cleanly.
-    vectors = model.encode(texts, normalize_embeddings=True)
-
-    # `vectors` comes back as a NumPy array; .tolist() converts it to plain
-    # Python lists of floats, which is what we store in the database.
-    return vectors.tolist()
+    if not texts:
+        return []
+    return _embed_batch(texts, task_type)
 
 
-def embed_text(text: str) -> List[float]:
+def embed_text(text: str, task_type: str = "retrieval_query") -> List[float]:
     """
-    Turn ONE string into ONE vector.
+    Turn ONE string into ONE 768-dim vector.
 
-    A small convenience wrapper used at ask time to embed the user's question.
+    Defaults to "retrieval_query" because this is used at ask time to embed
+    the user's question.
     """
-    # Reuse embed_texts by passing a one-item list, then take the first result.
-    return embed_texts([text])[0]
+    # Reuse the batch path with a single-item list, then take the first vector.
+    return _embed_batch([text], task_type)[0]

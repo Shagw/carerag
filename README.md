@@ -29,11 +29,11 @@ If the answer isn't in your documents, CareRAG honestly says **"I don't know"** 
 UPLOAD (once per document)
   PDF ─► extract text + page numbers (PyMuPDF)
       ─► split into overlapping chunks
-      ─► embed each chunk locally (sentence-transformers, 384-dim)
+      ─► embed each chunk via Gemini embedding API (gemini-embedding-001, 768-dim)
       ─► store chunk + vector in Postgres (pgvector)
 
 ASK (every question)
-  question ─► embed locally ─► find nearest chunks (pgvector cosine search)
+  question ─► embed via Gemini ─► find nearest chunks (pgvector cosine search)
           ─► strict "I don't know" guard (distance threshold)
           ─► build prompt (chunks + chat history) ─► Gemini writes the answer
           ─► attach citations (document + page + snippet)
@@ -51,10 +51,10 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for diagrams and module responsibilitie
 | Backend API | **FastAPI** | Fast, typed, auto docs at `/docs` |
 | Database | **Supabase Postgres + pgvector** | Free managed Postgres with vector search |
 | PDF parsing | **PyMuPDF** | Extracts text **with page numbers** (enables citations) |
-| Embeddings | **sentence-transformers `all-MiniLM-L6-v2`** | Runs locally — no API key, no cost, 384-dim |
+| Embeddings | **Google Gemini `gemini-embedding-001`** | Free-tier embedding API, 768-dim (server-side, so the app is lightweight) |
 | Answer LLM | **Google Gemini (`gemini-flash-latest`)** | Free-tier API for answer generation |
 | UI | **Streamlit** | Chat interface in pure Python |
-| Deploy | **Hugging Face Spaces** | Free hosting (see `DEPLOYMENT.md`) |
+| Deploy | **Streamlit Community Cloud** (UI) + **Render** (API) | Free hosting (see `DEPLOYMENT.md`) |
 
 ---
 
@@ -69,16 +69,18 @@ carerag/
 │   ├── models.py            # Pydantic request/response shapes
 │   ├── pdf_utils.py         # extract text + page numbers (PyMuPDF)
 │   ├── chunking.py          # split text into overlapping chunks
-│   ├── embeddings.py        # local sentence-transformers encoder
+│   ├── embeddings.py        # Gemini embedding API encoder (768-dim, batched)
 │   ├── vector_store.py      # save chunks + pgvector similarity search
 │   ├── conversations.py     # chat history (memory)
 │   ├── key_manager.py       # rotate up to 5 Gemini keys with cooldown
 │   ├── llm.py               # call Gemini
 │   └── rag.py               # the RAG pipeline (retrieve → answer → cite)
 ├── ui/
-│   └── streamlit_app.py     # the chat web UI
+│   ├── streamlit_app.py     # chat UI that calls the API over HTTP (local dev)
+│   └── streamlit_direct.py  # chat UI that calls RAG in-process (deployed)
 ├── sample_docs/
 │   └── sample_policy.pdf    # example document to test with
+├── runtime.txt              # pins Python 3.11 for deployment
 ├── requirements.txt
 ├── .env.example             # template for your secrets (copy to .env)
 ├── PLAN.md                  # beginner-friendly concept guide
@@ -123,16 +125,24 @@ python -m app.database
 ```
 Expected: `Tables created (or already existed). Database is ready.`
 
-### 5. Start the backend and the UI (two terminals)
+### 5. Start the app
+
+**Option A — simplest (one process, no separate API):**
+```bash
+streamlit run ui/streamlit_direct.py
+```
+This UI calls the RAG logic directly. Open the Streamlit URL (usually http://localhost:8501),
+upload `sample_docs/sample_policy.pdf`, and start asking questions.
+
+**Option B — API + UI split (also gives you `/docs`):** two terminals:
 ```bash
 # Terminal 1 — API
 uvicorn app.main:app --reload
 
-# Terminal 2 — UI
+# Terminal 2 — UI (talks to the API over HTTP)
 streamlit run ui/streamlit_app.py
 ```
-Open the Streamlit URL (usually http://localhost:8501), upload `sample_docs/sample_policy.pdf`,
-and start asking questions.
+Open http://localhost:8000/docs for the interactive API, and the Streamlit URL for the chat.
 
 ---
 

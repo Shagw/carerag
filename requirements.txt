@@ -37,17 +37,17 @@ PyMuPDF==1.24.14
 # (document + page) possible. (You import it in code as "fitz".)
 
 
-# --- Turning text into vectors (LOCAL embeddings) ---------------------------
+# --- Turning text into vectors (Gemini embedding API) -----------------------
 
-sentence-transformers==3.3.1
-# This runs the local embedding model (all-MiniLM-L6-v2) INSIDE our app.
-# It converts text into a list of 384 numbers (a "vector") that represents
-# the meaning of the text. No API key, no cost, runs on CPU.
+# NOTE: We use Google's Gemini embedding API (see app/embeddings.py), NOT a
+# local model. This avoids installing PyTorch (~300+ MB RAM), so the app fits
+# on small free hosts like Render's 512 MB free tier. The Gemini client library
+# is already listed below (google-generativeai).
 
 
 # --- The database (Supabase Postgres + pgvector) ----------------------------
 
-psycopg[binary]==3.2.3
+psycopg[binary]==3.2.10
 # psycopg is the driver that lets our Python code talk to a PostgreSQL
 # database (our Supabase database). The [binary] part means it comes
 # pre-compiled, so it's easy to install with no extra system tools.

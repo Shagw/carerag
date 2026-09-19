@@ -64,7 +64,7 @@ def create_tables():
             cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
 
             # Now that the extension exists, register the vector type on this
-            # connection so the vector(384) column below is understood.
+            # connection so the vector(768) column below is understood.
             conn.commit()          # save the CREATE EXTENSION first
             register_vector(conn)  # then it's safe to register the type
 
@@ -102,7 +102,7 @@ def create_tables():
                                 ON DELETE CASCADE,          -- delete a document -> its chunks go too
                     page_number INTEGER NOT NULL,          -- page it came from (for citations)
                     content     TEXT NOT NULL,             -- the chunk text (also the citation snippet)
-                    embedding   vector(384)                -- the 384-number meaning vector
+                    embedding   vector(768)                -- the 768-number meaning vector (Gemini)
                 );
                 """
             )

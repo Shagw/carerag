@@ -1,71 +1,83 @@
 # ============================================================================
-# embeddings.py — turn text into "embeddings" (vectors) using a LOCAL model.
+# embeddings.py — turn text into "embeddings" (vectors) using the Gemini API.
 #
-# "Local" means the model runs inside THIS Python process. No API key, no cost,
-# no internet needed after the first download. The model outputs 384 numbers
-# per piece of text — that's why our database column is vector(384).
+# WHY GEMINI (not a local model)? The local sentence-transformers model pulls
+# in PyTorch (~300+ MB RAM), which does not fit on small free hosts (e.g.
+# Render's 512 MB free tier). Gemini's embedding API runs server-side, so our
+# app stays tiny and deploys on free hosting.
+#
+# Model: gemini-embedding-001, requested at 768 dimensions (output_dimensionality)
+# to keep the database lean. That is why our DB column is vector(768).
+#
+# We use task_type to improve retrieval quality:
+#   - "retrieval_document"  when embedding the stored document chunks
+#   - "retrieval_query"     when embedding the user's question
 #
 # Main functions:
-#     embed_texts(["a", "b"])  ->  [[384 numbers], [384 numbers]]   (many texts)
-#     embed_text("a question") ->  [384 numbers]                    (one text)
+#   embed_texts(texts)  -> list of 768-dim vectors (documents, by default)
+#   embed_text(text)    -> one 768-dim vector (query, by default)
 # ============================================================================
 
 from typing import List
 
-# SentenceTransformer is the class that loads and runs the embedding model.
-from sentence_transformers import SentenceTransformer
+import google.generativeai as genai
+
+from app.key_manager import key_manager, AllKeysCoolingDown
 
 
-# The model we use. It's small (~90 MB), fast on CPU, and outputs 384-dim vectors.
-MODEL_NAME = "all-MiniLM-L6-v2"
-
-# We keep the loaded model here so we only load it ONCE and reuse it.
-# It starts as None and gets filled in the first time we need it.
-_model = None
+# The Gemini embedding model and the dimension we request.
+MODEL_NAME = "models/gemini-embedding-001"
+EMBED_DIM = 768
 
 
-def _get_model() -> SentenceTransformer:
+def _embed_one(text: str, task_type: str) -> List[float]:
     """
-    Return the embedding model, loading it the first time it's needed.
+    Embed a SINGLE piece of text with Gemini, returning a 768-number vector.
 
-    This "lazy loading" avoids reloading the ~90 MB model on every call.
-    The first call downloads (once) and loads it; later calls reuse it.
+    Uses the key manager so a rate-limited key is skipped for the next one.
     """
-    global _model  # we want to modify the module-level _model variable
+    # Try each key at most once (same rotation idea as llm.py).
+    for _attempt in range(len(key_manager.keys)):
+        try:
+            api_key = key_manager.get_key()
+        except AllKeysCoolingDown:
+            raise RuntimeError("All AI keys are cooling down, please try again in a minute.")
 
-    # Only load if we haven't already.
-    if _model is None:
-        print(f"Loading embedding model '{MODEL_NAME}' (first time may download ~90 MB)...")
-        _model = SentenceTransformer(MODEL_NAME)
-        print("Embedding model loaded.")
+        try:
+            genai.configure(api_key=api_key)
+            result = genai.embed_content(
+                model=MODEL_NAME,
+                content=text,
+                task_type=task_type,
+                output_dimensionality=EMBED_DIM,
+            )
+            return result["embedding"]
+        except Exception as error:
+            # If it's a rate-limit, cool the key down and try the next one.
+            message = str(error).lower()
+            if "429" in message or "quota" in message or "rate" in message or "exhausted" in message:
+                key_manager.mark_rate_limited(api_key)
+                continue
+            raise  # a real error (bad key, network) — surface it
 
-    return _model
+    raise RuntimeError("All AI keys are cooling down, please try again in a minute.")
 
 
-def embed_texts(texts: List[str]) -> List[List[float]]:
+def embed_texts(texts: List[str], task_type: str = "retrieval_document") -> List[List[float]]:
     """
-    Turn a LIST of strings into a LIST of vectors (one vector per string).
+    Turn a LIST of strings into a LIST of 768-dim vectors.
 
-    Used at upload time to embed all the chunks of a document at once
-    (embedding in a batch is faster than one at a time).
+    Defaults to "retrieval_document" because this is used at upload time to
+    embed the document chunks we store.
     """
-    model = _get_model()
-
-    # model.encode(...) does the actual work.
-    #   normalize_embeddings=True  -> scale each vector to length 1, which makes
-    #                                 cosine similarity search behave cleanly.
-    vectors = model.encode(texts, normalize_embeddings=True)
-
-    # `vectors` comes back as a NumPy array; .tolist() converts it to plain
-    # Python lists of floats, which is what we store in the database.
-    return vectors.tolist()
+    return [_embed_one(text, task_type) for text in texts]
 
 
-def embed_text(text: str) -> List[float]:
+def embed_text(text: str, task_type: str = "retrieval_query") -> List[float]:
     """
-    Turn ONE string into ONE vector.
+    Turn ONE string into ONE 768-dim vector.
 
-    A small convenience wrapper used at ask time to embed the user's question.
+    Defaults to "retrieval_query" because this is used at ask time to embed
+    the user's question.
     """
-    # Reuse embed_texts by passing a one-item list, then take the first result.
-    return embed_texts([text])[0]
+    return _embed_one(text, task_type)

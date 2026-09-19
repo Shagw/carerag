@@ -1,13 +1,23 @@
 # 🚀 Deploying CareRAG for free
 
-This guide deploys CareRAG at **$0** using:
+This guide deploys CareRAG at **$0**. The stack uses:
 - **Supabase** — free managed Postgres database (with pgvector)
-- **Hugging Face Spaces** — free container that runs BOTH the FastAPI backend and the Streamlit UI
+- **Google Gemini** — free API for both embeddings and answers (no local model, so it fits small
+  free hosts)
+- **Render** (for the API) and/or **Streamlit Community Cloud** (for the chat UI)
 
-By the end you'll have one public URL you can put on your CV.
-
-> CareRAG has two processes: the FastAPI backend and the Streamlit UI. On Hugging Face Spaces we
-> run **both in the same Space** using a small startup script, so it's still a single free service.
+> **Why not one single service?** CareRAG has two parts: a FastAPI backend and a Streamlit UI.
+> Free hosts run one process each, so you have two easy options:
+>
+> - **Option A (recommended, simplest UI):** deploy the **direct-mode UI**
+>   (`ui/streamlit_direct.py`) on **Streamlit Community Cloud**. It calls the RAG functions
+>   in-process, so it needs **no separate backend** — one free service, one public chat URL.
+> - **Option B (API + UI split):** deploy the FastAPI backend on **Render** (start command
+>   `uvicorn app.main:app --host 0.0.0.0 --port $PORT`) and the HTTP UI (`ui/streamlit_app.py`)
+>   separately, pointed at the Render API URL.
+>
+> Both are free. Parts 1–2 (Supabase + Gemini) are shared by both. See the two deployment
+> sections after Part 2.
 
 ---
 
@@ -133,3 +143,44 @@ When it's live, open the Space URL — that's your public CareRAG demo. 🎉
 | Embeddings | Runs locally in the app | $0 |
 | Hugging Face Spaces | Free CPU | $0 |
 | **Total** | | **$0** |
+
+
+---
+
+## Deploy the chat UI on Streamlit Community Cloud (Option A — recommended)
+
+This deploys `ui/streamlit_direct.py`, which runs everything in one process (no separate API).
+
+1. Push your code to GitHub (Part 3 above), including `ui/streamlit_direct.py`.
+2. Go to https://share.streamlit.io and sign in with GitHub (free, no card).
+3. **Create app** → pick your repo and branch → set **Main file path** to:
+   ```
+   ui/streamlit_direct.py
+   ```
+4. Open **Advanced settings → Secrets** and paste your secrets in TOML form:
+   ```toml
+   DATABASE_URL = "postgresql://postgres.xxx:PASSWORD@aws-0-region.pooler.supabase.com:5432/postgres"
+   GEMINI_API_KEY_1 = "your-gemini-key"
+   SIMILARITY_THRESHOLD = "0.8"
+   ```
+   (Streamlit Cloud exposes these as environment variables, which `app/config.py` reads — same as
+   a local `.env`.)
+5. Click **Deploy**. First build takes a few minutes. You'll get a public URL like
+   `https://your-app.streamlit.app` — that's your live CareRAG chat. 🎉
+
+> Because we use the Gemini embedding API (not a local PyTorch model), the app is lightweight and
+> fits Streamlit Community Cloud's free resources comfortably.
+
+---
+
+## Deploy the API on Render (Option B — API + /docs)
+
+1. Push to GitHub. On https://render.com create a **New Web Service** from your repo.
+2. **Build command:** `pip install -r requirements.txt`
+3. **Start command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+4. Add environment variables: `DATABASE_URL`, `GEMINI_API_KEY_1`, `SIMILARITY_THRESHOLD=0.8`.
+5. `runtime.txt` pins Python 3.11 (required — newer Python lacks some pinned wheels).
+6. Deploy. Your API is at `https://<name>.onrender.com` (`/` health check, `/docs` interactive docs).
+
+> The free Render tier has 512 MB RAM and sleeps when idle. Thanks to Gemini embeddings (no torch),
+> the app fits within 512 MB.

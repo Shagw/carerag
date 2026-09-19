@@ -1,15 +1,16 @@
 # ============================================================================
-# streamlit_direct.py — CareRAG chat UI in "direct mode".
+# streamlit_direct.py — CareRAG MULTI-CHAT web UI in "direct mode".
 #
-# DIFFERENCE FROM streamlit_app.py:
-#   - streamlit_app.py talks to the FastAPI backend over HTTP (needs uvicorn
-#     running separately). Good for local dev with the real API + /docs.
-#   - THIS file calls the backend functions DIRECTLY (in the same process).
-#     No separate server needed, so it deploys as ONE process on free hosts
-#     like Streamlit Community Cloud.
+# "Direct mode": this UI calls the backend functions IN-PROCESS (no HTTP, no
+# separate FastAPI server), so it deploys as ONE process on free hosts like
+# Streamlit Community Cloud.
 #
-# It still uses the same database (Supabase) and Gemini, and keeps per-session
-# document isolation (session id in the URL).
+# Multi-chat workspace:
+#   - Sidebar lists your chats. Click one to switch. "New chat" makes more.
+#   - Each chat has its OWN documents, history, and search (isolated). A chat's
+#     id doubles as the session_id used by the backend functions.
+#   - You upload PDFs INSIDE the chat area (each chat = its own knowledge base).
+#   - Every answer shows clickable citations (document + page + snippet).
 #
 # HOW TO RUN:
 #   streamlit run ui/streamlit_direct.py
@@ -25,59 +26,37 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import streamlit as st
 
 # ---------------------------------------------------------------------------
-# Bridge Streamlit Cloud secrets -> environment variables.
-#
-# On Streamlit Community Cloud there is no .env file; you enter secrets in the
-# app's Secrets box. Our app/config.py reads settings from ENVIRONMENT VARIABLES
-# at import time, so we copy any st.secrets into os.environ BEFORE importing the
-# `app` package below. (Locally, st.secrets is usually empty and this does
-# nothing — the local .env is used instead.)
+# Bridge Streamlit Cloud secrets -> environment variables BEFORE importing app.
+# (config.py reads settings from the environment at import time; on Streamlit
+# Cloud there is no .env file, only st.secrets.)
 # ---------------------------------------------------------------------------
 try:
     for _key, _value in st.secrets.items():
-        # Only set if not already provided by the real environment.
         os.environ.setdefault(_key, str(_value))
 except Exception:
-    # No secrets configured (e.g. local dev) — fine, config.py will use .env.
     pass
 
-# Import the backend logic DIRECTLY (no HTTP). Must come AFTER the secrets
-# bridge above, because importing app.config reads the environment immediately.
+# Import the backend logic DIRECTLY (no HTTP). Must come AFTER the bridge above.
 from app.pdf_utils import extract_pages
 from app.chunking import chunk_pages
 from app.vector_store import save_chunks, list_documents
 from app.rag import answer_question
 from app.conversations import save_conversation, get_recent_history, get_full_history
+from app.chats import create_chat, list_chats, rename_chat
 
 
 st.set_page_config(page_title="CareRAG", page_icon="🏥", layout="centered")
-st.title("🏥 CareRAG — Healthcare Policy Assistant")
-st.caption("Upload your policy / bill / discharge documents and ask questions. "
-           "Every answer shows the exact source page.")
 
 
-# ----------------------------------------------------------------------------
-# Session id (per-browser isolation), persisted in the URL so refresh keeps it.
-# ----------------------------------------------------------------------------
-if "session_id" not in st.session_state:
-    existing = st.query_params.get("session")
-    if existing:
-        st.session_state.session_id = existing
-    else:
-        new_id = str(uuid.uuid4())
-        st.session_state.session_id = new_id
-        st.query_params["session"] = new_id
+# ---------------------------------------------------------------------------
+# Small helpers.
+# ---------------------------------------------------------------------------
 
-session_id = st.session_state.session_id
-
-
-# ----------------------------------------------------------------------------
-# Load this session's chat history on first load (so refresh restores it).
-# ----------------------------------------------------------------------------
-if "messages" not in st.session_state:
+def load_history_into_state(chat_id: str):
+    """Fill st.session_state.messages from the DB for the given chat."""
     st.session_state.messages = []
     try:
-        for turn in get_full_history(session_id):
+        for turn in get_full_history(chat_id):
             st.session_state.messages.append(
                 {"role": "user", "content": turn["question"], "sources": []}
             )
@@ -85,15 +64,11 @@ if "messages" not in st.session_state:
                 {"role": "assistant", "content": turn["answer"], "sources": turn.get("sources", [])}
             )
     except Exception:
-        # If the DB isn't reachable yet, just start empty.
         pass
 
 
-# ----------------------------------------------------------------------------
-# Helper: run the ingestion pipeline on an uploaded file (direct, no HTTP).
-# ----------------------------------------------------------------------------
-def ingest_file(uploaded_file) -> str:
-    """Extract -> chunk -> embed -> store one uploaded PDF. Returns a message."""
+def ingest_file(uploaded_file, chat_id: str) -> str:
+    """Extract -> chunk -> embed -> store one uploaded PDF for this chat."""
     data = uploaded_file.getvalue()
     if len(data) > 10 * 1024 * 1024:
         return f"'{uploaded_file.name}' is larger than 10 MB."
@@ -102,46 +77,99 @@ def ingest_file(uploaded_file) -> str:
     except ValueError as e:
         return f"'{uploaded_file.name}': {e}"
     chunks = chunk_pages(pages)
-    save_chunks(uploaded_file.name, chunks, session_id)
+    save_chunks(uploaded_file.name, chunks, chat_id)
     return f"Stored '{uploaded_file.name}' ({len(chunks)} chunks)."
 
 
-# ----------------------------------------------------------------------------
-# Sidebar: upload documents + list this session's documents.
-# ----------------------------------------------------------------------------
-with st.sidebar:
-    st.header("📁 Your documents")
+# ---------------------------------------------------------------------------
+# Decide the active chat. We keep the current chat id in the URL (?chat=...)
+# so a refresh stays on the same chat.
+# ---------------------------------------------------------------------------
+chats = list_chats()
 
-    uploaded = st.file_uploader("Upload PDF(s)", type=["pdf"], accept_multiple_files=True)
-    if st.button("Upload", disabled=not uploaded):
-        with st.spinner("Reading, chunking, and embedding..."):
-            for f in uploaded:
-                msg = ingest_file(f)
-                if msg.startswith("Stored"):
-                    st.success(msg)
-                else:
-                    st.error(msg)
+# If there are NO chats yet, create the first one automatically.
+if not chats:
+    first_id = create_chat("New chat")
+    chats = list_chats()
+
+current_chat_id = st.query_params.get("chat")
+valid_ids = [c["id"] for c in chats]
+if current_chat_id not in valid_ids:
+    current_chat_id = chats[0]["id"]
+    st.query_params["chat"] = current_chat_id
+
+names_by_id = {c["id"]: c["name"] for c in chats}
+
+# When the selected chat CHANGES, reload that chat's history into the screen.
+if st.session_state.get("active_chat_id") != current_chat_id:
+    st.session_state.active_chat_id = current_chat_id
+    load_history_into_state(current_chat_id)
+
+
+# ---------------------------------------------------------------------------
+# Sidebar: chat list + new chat + rename current chat.
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    st.header("💬 Your chats")
+
+    if st.button("➕ New chat", use_container_width=True):
+        new_id = create_chat("New chat")
+        st.query_params["chat"] = new_id
+        st.rerun()
 
     st.divider()
 
+    selected = st.radio(
+        "Switch chat",
+        options=valid_ids,
+        index=valid_ids.index(current_chat_id),
+        format_func=lambda cid: names_by_id.get(cid, "Chat"),
+    )
+    if selected != current_chat_id:
+        st.query_params["chat"] = selected
+        st.rerun()
+
+    st.divider()
+
+    st.caption("Rename this chat")
+    new_name = st.text_input("New name", value=names_by_id.get(current_chat_id, ""))
+    if st.button("Rename", use_container_width=True):
+        if new_name.strip():
+            rename_chat(current_chat_id, new_name.strip())
+            st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Main area: title, in-chat upload + this chat's documents, then the chat.
+# ---------------------------------------------------------------------------
+st.title("🏥 CareRAG")
+st.caption(f"Chat: **{names_by_id.get(current_chat_id, 'New chat')}** — "
+           "upload documents and ask questions. Answers cite their source page.")
+
+with st.expander("📎 Add documents to this chat", expanded=not st.session_state.messages):
+    uploaded = st.file_uploader(
+        "Upload PDF(s) for this chat", type=["pdf"], accept_multiple_files=True
+    )
+    if st.button("Upload to this chat", disabled=not uploaded):
+        with st.spinner("Reading, chunking, and embedding..."):
+            for f in uploaded:
+                msg = ingest_file(f, current_chat_id)
+                (st.success if msg.startswith("Stored") else st.error)(msg)
+
     try:
-        docs = list_documents(session_id)
+        docs = list_documents(current_chat_id)
     except Exception:
         docs = []
     if docs:
-        st.write("In your knowledge base:")
+        st.write("In this chat:")
         for d in docs:
             st.write(f"• {d['filename']}  ({d['chunk_count']} chunks)")
     else:
-        st.info("No documents yet. Upload a PDF to begin.")
+        st.info("No documents in this chat yet.")
 
-    st.divider()
-    st.caption("Your documents are private to this browser session.")
+st.divider()
 
-
-# ----------------------------------------------------------------------------
-# Main chat area.
-# ----------------------------------------------------------------------------
+# Redraw the current chat's messages.
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
@@ -149,7 +177,7 @@ for message in st.session_state.messages:
             with st.expander(f"📄 {source['filename']} — page {source['page_number']}"):
                 st.write(source["snippet"])
 
-question = st.chat_input("Ask a question about your documents...")
+question = st.chat_input("Ask a question about this chat's documents...")
 
 if question:
     st.session_state.messages.append({"role": "user", "content": question})
@@ -159,12 +187,11 @@ if question:
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
-                history = get_recent_history(session_id, limit=5)
-                result = answer_question(question, session_id=session_id, history=history)
+                history = get_recent_history(current_chat_id, limit=5)
+                result = answer_question(question, session_id=current_chat_id, history=history)
                 answer = result["answer"]
                 sources = result["sources"]
-                # Save this turn (same as the API's /ask does).
-                save_conversation(session_id, question, answer, sources)
+                save_conversation(current_chat_id, question, answer, sources)
             except Exception as e:
                 answer = f"Something went wrong: {e}"
                 sources = []

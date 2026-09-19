@@ -68,56 +68,16 @@ These become `GEMINI_API_KEY_1` … `GEMINI_API_KEY_5`.
 
 ---
 
-## Part 4 — Deploy to Hugging Face Spaces (free)
+## Part 4 — Deploy the app (free)
 
-### 4.1 Create the Space
-1. Go to https://huggingface.co and sign in.
-2. **New Space** → choose:
-   - **SDK: Docker** (gives us full control to run both processes)
-   - **Hardware:** the free CPU tier
-3. Note the Space's Git URL.
-
-### 4.2 Add the files the Space needs
-
-Create these two files in your repo (they tell the Space how to run):
-
-**`Dockerfile`**
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-# Create the tables, then start BOTH the API and the UI.
-# The API runs on 8000 (internal); Streamlit is exposed on 7860 (HF default port).
-ENV API_BASE_URL=http://localhost:8000
-EXPOSE 7860
-CMD python -m app.database && \
-    (uvicorn app.main:app --host 0.0.0.0 --port 8000 &) && \
-    streamlit run ui/streamlit_app.py --server.port 7860 --server.address 0.0.0.0
-```
-
-> The UI's `API_BASE_URL` is already `http://localhost:8000`, which matches the backend inside the
-> same container.
-
-### 4.3 Add your secrets to the Space (NOT in code)
-In the Space: **Settings → Variables and secrets → New secret**. Add:
-- `DATABASE_URL` = your Supabase Session-pooler URI (no `?pgbouncer=true`)
-- `GEMINI_API_KEY_1` = your Gemini key (add `_2`…`_5` if you have more)
-- `SIMILARITY_THRESHOLD` = `0.8`
-
-These become environment variables the app reads via `config.py` — the same way `.env` works
-locally, but stored securely in the Space instead of a file.
-
-### 4.4 Push and let it build
-Push your repo (including the new `Dockerfile`) to the Space's Git remote (or connect the GitHub
-repo). Hugging Face builds the image and starts it. First build takes a few minutes (it downloads
-the embedding model once).
-
-When it's live, open the Space URL — that's your public CareRAG demo. 🎉
+> **Note on Hugging Face Spaces:** this project originally planned to use HF Spaces, but HF now
+> requires a **paid (PRO)** plan for compute Spaces (only Static — which can't run Python — stays
+> free). So we deploy on **Streamlit Community Cloud** and/or **Render** instead. Both are free and
+> run Python. See the two "Deploy the ..." sections at the end of this document:
+>
+> - **Deploy the chat UI on Streamlit Community Cloud (Option A — recommended)** — one process, the
+>   full app, a public chat URL.
+> - **Deploy the API on Render (Option B)** — the FastAPI backend with `/docs`.
 
 ---
 
@@ -129,8 +89,8 @@ When it's live, open the Space URL — that's your public CareRAG demo. 🎉
 | `invalid URI query parameter "pgbouncer"` | Remove `?pgbouncer=true` from `DATABASE_URL`. |
 | `vector type not found` | First run must create the extension — `python -m app.database`. |
 | Answers always say "I don't know" | `SIMILARITY_THRESHOLD` too low. Set it to `0.8` and restart. |
-| Model download slow on first request | Normal — the embedding model (~90 MB) downloads once at startup. |
-| Space sleeps / slow first load | Free tier sleeps when idle; it wakes on the next visit. Expected. |
+| Out of memory on startup | You're using the old local embeddings. This project uses the Gemini embedding API (no torch) — make sure you're on the latest code. |
+| App sleeps / slow first load | Free tiers (Render/Streamlit Cloud) sleep when idle; they wake on the next visit. Expected. |
 
 ---
 
@@ -139,9 +99,9 @@ When it's live, open the Space URL — that's your public CareRAG demo. 🎉
 | Service | Tier | Cost |
 |---------|------|------|
 | Supabase | Free (500 MB DB) | $0 |
-| Gemini API | Free tier | $0 |
-| Embeddings | Runs locally in the app | $0 |
-| Hugging Face Spaces | Free CPU | $0 |
+| Gemini API (embeddings + answers) | Free tier | $0 |
+| Streamlit Community Cloud (UI) | Free | $0 |
+| Render (API, optional) | Free tier | $0 |
 | **Total** | | **$0** |
 
 

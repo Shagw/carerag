@@ -47,7 +47,7 @@ sentence-transformers==3.3.1
 
 # --- The database (Supabase Postgres + pgvector) ----------------------------
 
-psycopg[binary]==3.2.3
+psycopg[binary]==3.2.10
 # psycopg is the driver that lets our Python code talk to a PostgreSQL
 # database (our Supabase database). The [binary] part means it comes
 # pre-compiled, so it's easy to install with no extra system tools.

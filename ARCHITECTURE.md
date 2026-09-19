@@ -74,6 +74,11 @@ question (+ session_id for memory)
   → save to conversations                # history + follow-up memory
 ```
 
+> **Per-session isolation:** `search` filters `WHERE documents.session_id = sid` FIRST, then ranks
+> by distance. So chunks from other sessions/chats are never candidates — you can only ever retrieve
+> your own session's documents. (`session_id` is stored on the `documents` table; the UI keeps it in
+> the page URL as `?session=...`.)
+
 ---
 
 ## 3. Module responsibilities (one job each)

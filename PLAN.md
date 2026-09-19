@@ -153,11 +153,13 @@ Each file does **one job**. This keeps every file short and easy to read.
 
 ## 6. The database design
 
-We support **multiple documents**, and every question searches **across all of them**. Three tables:
+We support **multiple documents**, and a question searches across all of them **within the same
+browser session** (see per-session isolation below). Three tables:
 
 **`documents`** — one row per uploaded PDF.
 ```
 id            (unique id)
+session_id    (which browser session uploaded it — enables per-session isolation)
 filename      (original file name — shown in citations)
 uploaded_at   (timestamp)
 ```
@@ -182,12 +184,33 @@ created_at    (timestamp)
 ```
 
 Because it's **multiple documents**, supporting them is almost free: upload just adds more rows to
-`chunks`, and search naturally looks across every chunk regardless of document. The citation carries
-the document name so the user sees exactly which file (and page) each answer came from.
+`chunks`, and search looks across every chunk of the current session regardless of which document it
+came from. The citation carries the document name so the user sees exactly which file (and page)
+each answer came from.
 
 The magic query is: *"give me the 5 chunks whose `embedding` is closest to the question's
 embedding"*. pgvector does this with the `<=>` (cosine distance) operator. Smaller distance = closer
 meaning.
+
+### Per-session document isolation (privacy)
+
+Every uploaded document is tagged with a `session_id` (the id of the browser session that uploaded
+it). Three functions filter by it:
+
+- `save_chunks(filename, chunks, session_id)` — stores the document under that session.
+- `search(query_vector, top_k, session_id)` — its SQL has `WHERE documents.session_id = %s`, so the
+  database **discards every chunk from other sessions BEFORE ranking by distance**. A chunk from a
+  different chat is never even a candidate.
+- `list_documents(session_id)` — only lists that session's documents.
+
+So there are **two separate ideas** at query time, and they run in this order:
+1. **`session_id` filter (the WHERE clause)** decides *whose* documents are eligible — a hard
+   boundary. You can never retrieve another session's chunk.
+2. **cosine distance (the ORDER BY)** decides *which* of the eligible chunks match best by meaning.
+
+The `session_id` lives in the page URL (`?session=...`) so a refresh keeps the same session. This is
+a no-login demo, so the isolation is convenience/privacy between sessions, not hard security —
+someone with your exact session URL could load it. That trade-off is documented in the README.
 
 ---
 

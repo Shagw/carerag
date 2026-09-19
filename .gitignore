@@ -1,0 +1,35 @@
+# ============================================================================
+# .gitignore — tells Git which files/folders to NEVER upload to GitHub.
+# Each line is a pattern. Anything matching it is skipped by git.
+# ============================================================================
+
+# --- SECRETS (most important line in this file) -----------------------------
+# Never commit your real secrets. Only .env.example (the template) is shared.
+.env
+
+# --- Python virtual environment ---------------------------------------------
+# The folder where your installed libraries live. It's big and machine-specific,
+# so we don't upload it — others just run pip install -r requirements.txt.
+venv/
+.venv/
+env/
+
+# --- Python cache files -----------------------------------------------------
+# Auto-generated compiled files and caches. No need to share them.
+__pycache__/
+*.pyc
+*.pyo
+
+# --- Downloaded embedding model cache ---------------------------------------
+# sentence-transformers downloads the model here on first run. It's large and
+# re-downloads automatically, so we don't commit it.
+.cache/
+models/
+
+# --- Editor / OS junk -------------------------------------------------------
+.DS_Store
+.vscode/
+.idea/
+
+# --- Uploaded files (if we ever save PDFs to disk locally) ------------------
+uploads/

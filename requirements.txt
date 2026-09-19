@@ -1,0 +1,87 @@
+# ============================================================================
+# requirements.txt — the Python libraries CareRAG needs.
+#
+# HOW TO USE (you will run this later, once your virtual environment is ready):
+#     pip install -r requirements.txt
+#
+# The "==" pins an EXACT version. This means the project installs the same way
+# every time, on your laptop and on the deployment server. No surprises.
+#
+# Each line below is one library, with a comment saying WHY we need it.
+# ============================================================================
+
+
+# --- Web backend (the API) --------------------------------------------------
+
+fastapi==0.115.5
+# FastAPI is the framework we use to build our backend API.
+# It gives us the /upload and /ask endpoints, plus automatic interactive
+# API docs at http://localhost:8000/docs.
+
+uvicorn[standard]==0.32.1
+# Uvicorn is the "server" that actually runs our FastAPI app.
+# FastAPI is just the code; uvicorn is the engine that listens for web
+# requests and hands them to FastAPI. The [standard] part adds some helpful
+# extras (like auto-reload while developing).
+
+python-multipart==0.0.12
+# Needed so FastAPI can receive uploaded FILES (our PDFs).
+# Without this, file upload endpoints won't work.
+
+
+# --- Reading PDFs -----------------------------------------------------------
+
+PyMuPDF==1.24.14
+# PyMuPDF extracts text from PDF files. Crucially, it also tells us the PAGE
+# NUMBER each piece of text came from — that is what makes our citations
+# (document + page) possible. (You import it in code as "fitz".)
+
+
+# --- Turning text into vectors (LOCAL embeddings) ---------------------------
+
+sentence-transformers==3.3.1
+# This runs the local embedding model (all-MiniLM-L6-v2) INSIDE our app.
+# It converts text into a list of 384 numbers (a "vector") that represents
+# the meaning of the text. No API key, no cost, runs on CPU.
+
+
+# --- The database (Supabase Postgres + pgvector) ----------------------------
+
+psycopg[binary]==3.2.3
+# psycopg is the driver that lets our Python code talk to a PostgreSQL
+# database (our Supabase database). The [binary] part means it comes
+# pre-compiled, so it's easy to install with no extra system tools.
+
+pgvector==0.3.6
+# A small helper that teaches psycopg how to send/receive the "vector" type
+# used by the pgvector extension in Postgres. Lets us store and search vectors.
+
+
+# --- The answer LLM (Google Gemini) -----------------------------------------
+
+google-generativeai==0.8.3
+# The official Google library to call the Gemini API. We use it ONLY to
+# generate the final answer text (gemini-1.5-flash). The API key(s) come
+# from your .env file.
+
+
+# --- Configuration / settings ----------------------------------------------
+
+pydantic-settings==2.6.1
+# Lets us read settings (like the database URL and Gemini keys) from the
+# environment / .env file in a clean, typed way inside config.py.
+
+python-dotenv==1.0.1
+# Loads the values from your .env file into the environment when the app
+# starts, so config.py can read them during local development.
+
+
+# --- The user interface (chat webpage) --------------------------------------
+
+streamlit==1.40.2
+# Streamlit builds our chat web page in pure Python (upload PDFs, ask
+# questions, see answers + citations). No HTML/JavaScript needed.
+
+requests==2.32.3
+# A simple library the Streamlit UI uses to send the user's PDF/question
+# to our FastAPI backend over HTTP.

@@ -25,6 +25,7 @@ from app.chunking import chunk_pages             # [(page, text)] -> [(page, chu
 from app.vector_store import save_chunks, list_documents  # store + list documents
 from app.rag import answer_question              # the full RAG pipeline
 from app.conversations import save_conversation, get_recent_history, get_full_history  # chat memory
+from app.chats import create_chat, list_chats, rename_chat  # multi-chat workspace
 from app.models import (
     UploadResponse,
     UploadedDocument,
@@ -32,6 +33,9 @@ from app.models import (
     AskResponse,
     Citation,
     DocumentInfo,
+    CreateChatRequest,
+    RenameChatRequest,
+    ChatInfo,
 )
 
 
@@ -175,3 +179,29 @@ def get_history(session_id: str):
     e.g. /history?session_id=abc123
     """
     return get_full_history(session_id)
+
+
+# ----------------------------------------------------------------------------
+# Chat management endpoints (multi-chat workspace).
+# A chat's id doubles as the session_id used by /upload, /ask, /documents,
+# /history — so each chat has its own isolated documents, history, and search.
+# ----------------------------------------------------------------------------
+
+@app.post("/chats", response_model=ChatInfo)
+def create_new_chat(request: CreateChatRequest):
+    """Create a new named chat and return it (with its new id)."""
+    chat_id = create_chat(request.name)
+    return ChatInfo(id=chat_id, name=request.name)
+
+
+@app.get("/chats", response_model=List[ChatInfo])
+def get_chats():
+    """List all chats (newest first) for the sidebar."""
+    return [ChatInfo(**chat) for chat in list_chats()]
+
+
+@app.patch("/chats/{chat_id}", response_model=ChatInfo)
+def rename_existing_chat(chat_id: str, request: RenameChatRequest):
+    """Rename an existing chat."""
+    rename_chat(chat_id, request.name)
+    return ChatInfo(id=chat_id, name=request.name)

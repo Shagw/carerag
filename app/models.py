@@ -79,3 +79,23 @@ class DocumentInfo(BaseModel):
     id: int
     filename: str
     chunk_count: int
+
+
+# ----------------------------------------------------------------------------
+# Models for the /chats endpoints (multi-chat workspace).
+# ----------------------------------------------------------------------------
+
+class CreateChatRequest(BaseModel):
+    """Client sends this to create a new chat."""
+    name: str = "New chat"          # default name if none provided
+
+
+class RenameChatRequest(BaseModel):
+    """Client sends this to rename an existing chat."""
+    name: str
+
+
+class ChatInfo(BaseModel):
+    """One chat in the sidebar list."""
+    id: str
+    name: str

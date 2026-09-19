@@ -130,6 +130,20 @@ def create_tables():
                 """
             )
 
+            # 6) chats table — the list of named chats (multi-chat workspace).
+            #    A chat's `id` is the SAME value used as session_id on documents
+            #    and conversations, so each chat has its own isolated documents,
+            #    history, and search.
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chats (
+                    id         TEXT PRIMARY KEY,          -- the chat id (a UUID) = session_id elsewhere
+                    name       TEXT NOT NULL,             -- human-friendly name, e.g. "Health Policy"
+                    created_at TIMESTAMP DEFAULT now()
+                );
+                """
+            )
+
         # Save all the changes above to the database.
         conn.commit()
 

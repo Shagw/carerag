@@ -1,0 +1,10 @@
+# Keep the Docker image small and safe — never copy these in.
+venv/
+.venv/
+__pycache__/
+*.pyc
+.env
+.git/
+.streamlit/
+models/
+.cache/

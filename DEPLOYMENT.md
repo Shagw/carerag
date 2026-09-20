@@ -144,3 +144,24 @@ This deploys `ui/streamlit_direct.py`, which runs everything in one process (no 
 
 > The free Render tier has 512 MB RAM and sleeps when idle. Thanks to Gemini embeddings (no torch),
 > the app fits within 512 MB.
+
+---
+
+## Run with Docker (optional)
+
+A `Dockerfile` is provided to run the whole app (the Streamlit chat UI, which calls the RAG logic
+in-process) as one container:
+
+```bash
+docker build -t carerag .
+docker run -p 8501:8501 \
+    -e DATABASE_URL="<your supabase pooler uri>" \
+    -e GEMINI_API_KEY_1="<your gemini key>" \
+    -e SIMILARITY_THRESHOLD=0.8 \
+    carerag
+# open http://localhost:8501
+```
+
+> Note: the Docker image follows the standard Python 3.11-slim pattern and matches `runtime.txt`,
+> but was not built/tested in the original dev environment (Docker was not installed there). The
+> non-Docker paths (Streamlit Community Cloud, Render, and local `streamlit run`) are verified.

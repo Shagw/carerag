@@ -18,7 +18,9 @@ If the answer isn't in your documents, CareRAG honestly says **"I don't know"** 
 - 📌 **Source citations** — every answer shows the document, page, and exact quoted snippet
 - 🛡️ **"I don't know" guardrail** — refuses to answer when the documents don't cover it
 - 🧠 **Conversation memory** — follow-up questions understand previous turns
-- 🔐 **Per-session isolation** — each browser session only sees its own uploaded documents
+- 🗂️ **Multi-chat workspaces** — a visitor enters a name to get a private workspace, then creates
+  multiple named conversations, each with its **own** documents, history, and search
+- 🔐 **Per-workspace isolation** — you only ever see your own workspace's conversations & documents
 - 🔁 **API key rotation** — rotates up to 5 Gemini keys with cooldown to survive free-tier limits
 
 ---
@@ -158,8 +160,16 @@ Try an off-topic one like "What is the capital of France?" to see the **"I don't
 | GET | `/` | Health check |
 | POST | `/upload` | Upload PDF(s) (form fields: `files`, `session_id`) |
 | POST | `/ask` | Ask a question (`{question, session_id}`) → answer + citations |
-| GET | `/documents?session_id=...` | List this session's documents |
-| GET | `/history?session_id=...` | This session's chat history |
+| GET | `/documents?session_id=...` | List a conversation's documents |
+| GET | `/history?session_id=...` | A conversation's chat history |
+| POST | `/owners` | Create a workspace owner (`{name}`) → `{id, name}` |
+| GET | `/owners/{owner_id}` | Look up an owner |
+| POST | `/chats` | Create a conversation (`{name, owner_id}`) |
+| GET | `/chats?owner_id=...` | List an owner's conversations |
+| PATCH | `/chats/{chat_id}` | Rename a conversation (`{name}`) |
+
+> Note: a conversation's id is used as the `session_id` for `/upload`, `/ask`, `/documents`, and
+> `/history` — which is what isolates each conversation's documents, history, and search.
 
 Interactive docs available at http://localhost:8000/docs when the backend is running.
 
@@ -167,18 +177,18 @@ Interactive docs available at http://localhost:8000/docs when the backend is run
 
 ## 🔐 Security note (please read)
 
-This is a **no-login demo**. Documents are isolated **per browser session** using a `session_id`
-kept in the page URL. This keeps different visitors' documents separate, but it is **not strong
-security**: anyone who obtains a session's URL/id could access that session's documents. Do **not**
-upload sensitive real medical records to the public demo. For production you would add real user
-authentication.
+This is a **no-login demo**. Each visitor enters a name to create a private **workspace**, identified
+by a random id kept in the page URL (`?owner=...`). Your conversations and documents are isolated to
+your workspace. However, this is **not strong security**: the workspace id is the only key, so anyone
+who obtains your exact URL could open your workspace. The name is just a friendly label, not a
+password. Do **not** upload sensitive real medical records to the public demo. For production you
+would add real user authentication.
 
 ---
 
 ## 📌 Possible future improvements
 
-- Multi-chat workspace (multiple named chats per user, each with its own documents)
-- User accounts / authentication
+- User accounts / authentication (the current workspace model is no-login)
 - OCR support for scanned PDFs **and PDFs with non-standard/broken font encodings** (see limitations)
 - Approximate vector index (HNSW) for very large document sets
 

@@ -199,10 +199,13 @@ with st.sidebar:
     # widget is created), which is the safe place to reset the selection.
     st.caption("Delete this conversation")
     confirm = st.checkbox("Yes, remove it from my list", key=f"confirmdel_{current_chat_id}")
-    if st.button("🗑️ Delete conversation", use_container_width=True, disabled=not confirm):
-        delete_chat(current_chat_id)
-        st.session_state["_just_deleted"] = True
-        st.rerun()
+    if st.button("🗑️ Delete conversation", use_container_width=True):
+        if confirm:
+            delete_chat(current_chat_id)
+            st.session_state["_just_deleted"] = True
+            st.rerun()
+        else:
+            st.warning("Please tick the box above to confirm deletion.")
 
 # When the active chat CHANGES, reload that chat's history into the screen.
 # (This runs AFTER the radio, so current_chat_id is already the new chat.)

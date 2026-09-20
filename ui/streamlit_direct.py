@@ -25,6 +25,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
 
+# set_page_config MUST be the very first Streamlit command — before anything
+# else that touches Streamlit (including reading st.secrets below).
+st.set_page_config(page_title="CareRAG", page_icon="🏥", layout="centered")
+
 # ---------------------------------------------------------------------------
 # Bridge Streamlit Cloud secrets -> environment variables BEFORE importing app.
 # (config.py reads settings from the environment at import time; on Streamlit
@@ -44,9 +48,6 @@ from app.rag import answer_question
 from app.conversations import save_conversation, get_recent_history, get_full_history
 from app.chats import create_chat, list_chats, rename_chat
 from app.owners import create_owner, get_owner
-
-
-st.set_page_config(page_title="CareRAG", page_icon="🏥", layout="centered")
 
 
 # ---------------------------------------------------------------------------

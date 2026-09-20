@@ -94,6 +94,27 @@ def ingest_file(uploaded_file, chat_id: str) -> str:
     return f"Added '{uploaded_file.name}'. You can ask questions about it now."
 
 
+def _render_sources(sources):
+    """
+    Show the sources behind an answer as a clean list of 'filename — page N'.
+
+    We deliberately do NOT show the quoted text snippet: some PDFs use broken
+    font encodings that make the extracted snippet look garbled. The document
+    name + page still lets a user open the original PDF and verify the answer.
+    Duplicate (file, page) pairs are collapsed so the list stays short.
+    """
+    if not sources:
+        return
+    seen = []
+    for s in sources:
+        pair = (s["filename"], s["page_number"])
+        if pair not in seen:
+            seen.append(pair)
+    st.caption("Sources:")
+    for filename, page in seen:
+        st.caption(f"📄 {filename} — page {page}")
+
+
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # OWNER (workspace) gate.
@@ -258,9 +279,7 @@ st.divider()
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
-        for source in message.get("sources", []):
-            with st.expander(f"📄 Source: {source['filename']} — page {source['page_number']}"):
-                st.write(source["snippet"])
+        _render_sources(message.get("sources", []))
 
 question = st.chat_input("Type your question here...")
 
@@ -283,9 +302,7 @@ if question:
                 sources = []
 
         st.write(answer)
-        for source in sources:
-            with st.expander(f"📄 {source['filename']} — page {source['page_number']}"):
-                st.write(source["snippet"])
+        _render_sources(sources)
 
     st.session_state.messages.append(
         {"role": "assistant", "content": answer, "sources": sources}

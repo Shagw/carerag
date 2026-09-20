@@ -57,7 +57,11 @@ class _SharedConnection:
 
 
 def _open_new_connection(register_vector_type: bool):
-    conn = psycopg.connect(settings.database_url)
+    # prepare_threshold=None disables psycopg3's automatic server-side prepared
+    # statements. Supabase's transaction pooler (pgbouncer) multiplexes backends,
+    # so reusing a connection could hit "prepared statement _pgN already exists".
+    # Turning prepared statements off avoids that clash (tiny perf cost only).
+    conn = psycopg.connect(settings.database_url, prepare_threshold=None)
     if register_vector_type:
         register_vector(conn)
     return conn
@@ -90,7 +94,7 @@ def create_tables():
     # Open a DEDICATED connection (not the shared cache) WITHOUT registering the
     # vector type yet — the "vector" type does not exist until CREATE EXTENSION
     # runs below. A dedicated connection avoids polluting the cache.
-    conn = psycopg.connect(settings.database_url)
+    conn = psycopg.connect(settings.database_url, prepare_threshold=None)
     try:
         with conn.cursor() as cur:
 

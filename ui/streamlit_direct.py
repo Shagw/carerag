@@ -33,10 +33,21 @@ st.set_page_config(page_title="CareRAG", page_icon="🏥", layout="centered")
 # Bridge Streamlit Cloud secrets -> environment variables BEFORE importing app.
 # (config.py reads settings from the environment at import time; on Streamlit
 # Cloud there is no .env file, only st.secrets.)
+#
+# We only touch st.secrets if a secrets file actually exists — otherwise
+# Streamlit logs a harmless "No secrets found" message locally. Locally we use
+# the .env file instead, so this block simply does nothing.
 # ---------------------------------------------------------------------------
 try:
-    for _key, _value in st.secrets.items():
-        os.environ.setdefault(_key, str(_value))
+    # Only read st.secrets if a secrets.toml actually exists (checked with plain
+    # Python so we never trigger Streamlit's "No secrets found" message locally).
+    _secrets_paths = [
+        os.path.expanduser("~/.streamlit/secrets.toml"),
+        os.path.join(os.getcwd(), ".streamlit", "secrets.toml"),
+    ]
+    if any(os.path.exists(p) for p in _secrets_paths):
+        for _key, _value in st.secrets.items():
+            os.environ.setdefault(_key, str(_value))
 except Exception:
     pass
 

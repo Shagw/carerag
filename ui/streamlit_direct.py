@@ -147,16 +147,25 @@ with st.sidebar:
 
     if st.button("➕ New chat", use_container_width=True):
         new_id = create_chat("New chat", owner_id)
+        st.session_state.chat_choice = new_id   # select the new chat in the radio
         st.query_params["chat"] = new_id
         st.rerun()
 
     st.divider()
 
+    # Seed the radio's selection from the URL ONCE (or when the stored choice is
+    # no longer valid, e.g. after creating a new chat). After that, the radio's
+    # own state (key='chat_choice') is the source of truth — we do NOT pass
+    # index=, which previously forced the selection back to the URL each run and
+    # caused the "need to click twice" lag.
+    if st.session_state.get("chat_choice") not in valid_ids:
+        st.session_state.chat_choice = default_id
+
     current_chat_id = st.radio(
         "Switch chat",
         options=valid_ids,
-        index=valid_ids.index(default_id),
         format_func=lambda cid: names_by_id.get(cid, "Chat"),
+        key="chat_choice",
     )
     # Keep the URL in sync with the radio (so a refresh stays on this chat).
     if st.query_params.get("chat") != current_chat_id:

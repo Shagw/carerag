@@ -152,8 +152,8 @@ Deployed app process (Streamlit Cloud OR Render — lightweight, no ML model)
 **Two deployment shapes, same code:**
 - **Streamlit Community Cloud** runs `ui/streamlit_direct.py`, which imports and calls the backend
   functions directly (one process, no HTTP). This is the deployed chat UI.
-- **Render** runs `app/main.py` with uvicorn as a FastAPI service (gives `/docs`). The HTTP UI
-  (`ui/streamlit_app.py`) can point at it.
+- **Render** (optional) runs `app/main.py` with uvicorn as a FastAPI service (gives `/docs`), for
+  using CareRAG as an HTTP API.
 
 **Key rule (unchanged):** the same embedding model must be used to store documents AND to search
 questions, so vectors are comparable. We use `gemini-embedding-001` (768-dim) for both — with

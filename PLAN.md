@@ -138,7 +138,7 @@ carerag/
 │   └── rag.py               ← the RAG pipeline: retrieve → prompt → answer → cite
 │
 ├── ui/
-│   └── streamlit_app.py     ← the chat interface (upload, chat, citations, doc list)
+│   └── streamlit_direct.py  ← the chat interface (multi-chat, calls RAG in-process)
 │
 └── sample_docs/             ← example PDFs to test with
 ```
@@ -314,8 +314,8 @@ python -m app.database
 # 4. Start the API
 uvicorn app.main:app --reload
 
-# 5. Start the UI (in another terminal)
-streamlit run ui/streamlit_app.py
+# 5. Start the UI (single process — no separate API needed)
+streamlit run ui/streamlit_direct.py
 ```
 
 Then open the Streamlit page, upload PDFs, and ask questions.

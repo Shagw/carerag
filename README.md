@@ -76,8 +76,7 @@ carerag/
 │   ├── llm.py               # call Gemini
 │   └── rag.py               # the RAG pipeline (retrieve → answer → cite)
 ├── ui/
-│   ├── streamlit_app.py     # chat UI that calls the API over HTTP (local dev)
-│   └── streamlit_direct.py  # chat UI that calls RAG in-process (deployed)
+│   └── streamlit_direct.py  # the chat UI (multi-chat, calls RAG in-process)
 ├── sample_docs/
 │   └── sample_policy.pdf    # example document to test with
 ├── runtime.txt              # pins Python 3.11 for deployment
@@ -127,22 +126,17 @@ Expected: `Tables created (or already existed). Database is ready.`
 
 ### 5. Start the app
 
-**Option A — simplest (one process, no separate API):**
+Run the chat UI (one process — it calls the RAG logic directly, no separate API needed):
 ```bash
 streamlit run ui/streamlit_direct.py
 ```
-This UI calls the RAG logic directly. Open the Streamlit URL (usually http://localhost:8501),
-upload `sample_docs/sample_policy.pdf`, and start asking questions.
+Open the Streamlit URL (usually http://localhost:8501). On first visit it asks your name to create
+a private workspace, then you can create chats, upload PDFs into a chat, and ask questions.
 
-**Option B — API + UI split (also gives you `/docs`):** two terminals:
+**Optional — run the API too** (for the interactive `/docs`, or to use CareRAG as a service):
 ```bash
-# Terminal 1 — API
-uvicorn app.main:app --reload
-
-# Terminal 2 — UI (talks to the API over HTTP)
-streamlit run ui/streamlit_app.py
+uvicorn app.main:app --reload   # then open http://localhost:8000/docs
 ```
-Open http://localhost:8000/docs for the interactive API, and the Streamlit URL for the chat.
 
 ---
 

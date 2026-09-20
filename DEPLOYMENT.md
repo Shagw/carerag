@@ -12,9 +12,9 @@ This guide deploys CareRAG at **$0**. The stack uses:
 > - **Option A (recommended, simplest UI):** deploy the **direct-mode UI**
 >   (`ui/streamlit_direct.py`) on **Streamlit Community Cloud**. It calls the RAG functions
 >   in-process, so it needs **no separate backend** — one free service, one public chat URL.
-> - **Option B (API + UI split):** deploy the FastAPI backend on **Render** (start command
->   `uvicorn app.main:app --host 0.0.0.0 --port $PORT`) and the HTTP UI (`ui/streamlit_app.py`)
->   separately, pointed at the Render API URL.
+> - **Option B (API service):** deploy the FastAPI backend on **Render** (start command
+>   `uvicorn app.main:app --host 0.0.0.0 --port $PORT`) to expose CareRAG as an HTTP API with
+>   interactive `/docs`.
 >
 > Both are free. Parts 1–2 (Supabase + Gemini) are shared by both. See the two deployment
 > sections after Part 2.

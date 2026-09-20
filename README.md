@@ -185,8 +185,22 @@ authentication.
 
 - Multi-chat workspace (multiple named chats per user, each with its own documents)
 - User accounts / authentication
-- OCR support for scanned (image-only) PDFs
+- OCR support for scanned PDFs **and PDFs with non-standard/broken font encodings** (see limitations)
 - Approximate vector index (HNSW) for very large document sets
+
+---
+
+## ⚠️ Known limitations
+
+- **PDF text quality depends on the source file.** Text is extracted with PyMuPDF. Most text-based
+  PDFs extract cleanly. However, some professionally-designed PDFs embed **decorative fonts with a
+  broken character map** — where, e.g., the word "Treatment" is stored internally as `$u;-|l;m|`.
+  That text is scrambled at the font level and **cannot be recovered without OCR** (which this
+  project intentionally omits to stay lightweight and free). We strip obvious junk (control
+  characters) and keep the readable text, so answers still work from the readable portions, but a
+  few words/headings on such pages may appear garbled in citations. Using clean text-based PDFs
+  gives the best results.
+- **No OCR:** scanned/image-only PDFs (no embedded text) are rejected with a clear message.
 
 ---
 

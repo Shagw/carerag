@@ -21,29 +21,63 @@ from pgvector.psycopg import register_vector
 from app.config import settings
 
 
-def get_connection(register_vector_type: bool = True):
-    """
-    Open and return a new connection to the Supabase Postgres database.
+# We cache ONE database connection and reuse it, because opening a new
+# connection to Supabase costs ~2 seconds (network + TLS + vector-type lookup).
+# Reconnecting on every query made switching/renaming chats very slow.
+_cached_conn = None
 
-    A "connection" is an open line to the database that we send SQL through.
-    Whoever calls this function is responsible for closing it when done
-    (we use `with get_connection() as conn:` elsewhere, which auto-closes).
 
-    register_vector_type:
-        Normally True — teaches psycopg about the pgvector "vector" type so we
-        can pass Python lists of numbers directly as vectors.
-        We pass False during first-time setup (create_tables), because the
-        "vector" type does not exist yet until we run CREATE EXTENSION.
+class _SharedConnection:
     """
-    # Connect using the URL from .env (postgresql://user:pass@host:5432/postgres).
+    A context manager wrapper around the shared connection.
+
+    Callers use `with get_connection() as conn:` all over the codebase. If we
+    returned the raw psycopg connection, that `with` block would CLOSE it on
+    exit (psycopg behaviour) — destroying our cache and forcing a slow reconnect
+    every call. This wrapper instead commits (or rolls back on error) at block
+    exit but keeps the connection OPEN for reuse.
+    """
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def __enter__(self):
+        return self._conn                     # give callers the real connection
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None:
+            self._conn.commit()               # success -> save
+        else:
+            self._conn.rollback()             # error -> undo, but keep conn open
+        return False                          # don't suppress exceptions
+
+    # Let callers also use the object directly if they don't use `with`.
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+def _open_new_connection(register_vector_type: bool):
     conn = psycopg.connect(settings.database_url)
-
-    # Only register the vector type if the caller asked for it AND the
-    # extension already exists (i.e. normal app use, not first-time setup).
     if register_vector_type:
         register_vector(conn)
-
     return conn
+
+
+def get_connection(register_vector_type: bool = True):
+    """
+    Return the shared, reused database connection wrapped so `with` blocks
+    commit but do NOT close it.
+
+    Reusing one connection avoids paying the ~2s connect cost on every query.
+    If the cached connection has been closed or has died, we open a fresh one.
+    """
+    global _cached_conn
+
+    # Reuse the existing connection if it's still open and healthy.
+    if _cached_conn is None or _cached_conn.closed:
+        _cached_conn = _open_new_connection(register_vector_type)
+
+    return _SharedConnection(_cached_conn)
 
 
 def create_tables():
@@ -53,10 +87,11 @@ def create_tables():
     Running this more than once is safe: every statement uses
     "IF NOT EXISTS", so it won't complain or duplicate anything.
     """
-    # Open a connection WITHOUT registering the vector type yet — the "vector"
-    # type does not exist until we run CREATE EXTENSION a few lines below.
-    with get_connection(register_vector_type=False) as conn:
-        # A "cursor" is the object we use to send SQL commands.
+    # Open a DEDICATED connection (not the shared cache) WITHOUT registering the
+    # vector type yet — the "vector" type does not exist until CREATE EXTENSION
+    # runs below. A dedicated connection avoids polluting the cache.
+    conn = psycopg.connect(settings.database_url)
+    try:
         with conn.cursor() as cur:
 
             # 1) Turn on the pgvector extension so Postgres understands the
@@ -146,6 +181,8 @@ def create_tables():
 
         # Save all the changes above to the database.
         conn.commit()
+    finally:
+        conn.close()
 
     print("Tables created (or already existed). Database is ready.")
 

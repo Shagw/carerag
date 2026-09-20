@@ -57,6 +57,38 @@ def _readable_ratio(text: str) -> float:
     return readable / len(text)
 
 
+# Words that strongly signal a healthcare or insurance document. We require a
+# few DISTINCT ones to appear before accepting an upload, so unrelated files
+# (e.g. a résumé) are rejected. Kept lowercase; we match case-insensitively.
+HEALTH_INSURANCE_TERMS = [
+    # insurance / policy
+    "insurance", "insured", "policy", "policyholder", "premium", "claim",
+    "coverage", "covered", "deductible", "reimbursement", "sum insured",
+    "pre-authorization", "preauthorization", "co-payment", "copay", "renewal",
+    "underwriting", "exclusion", "waiting period", "network hospital",
+    # healthcare / medical
+    "hospital", "hospitalization", "medical", "health", "patient", "diagnosis",
+    "treatment", "discharge", "clinical", "physician", "doctor", "illness",
+    "disease", "surgery", "in-patient", "outpatient", "prescription", "icu",
+]
+
+# How many DISTINCT terms must appear for the document to be accepted.
+MIN_DISTINCT_TERMS = 3
+
+
+def _looks_like_health_or_insurance(full_text: str) -> bool:
+    """
+    Return True if the document appears to be a healthcare/insurance document.
+
+    We lowercase the whole text and count how many DISTINCT terms from
+    HEALTH_INSURANCE_TERMS appear. A real policy/bill/discharge summary hits
+    many; an unrelated file (résumé, invoice, etc.) hits ~0.
+    """
+    lowered = full_text.lower()
+    found = {term for term in HEALTH_INSURANCE_TERMS if term in lowered}
+    return len(found) >= MIN_DISTINCT_TERMS
+
+
 def extract_pages(pdf_bytes: bytes) -> List[Tuple[int, str]]:
     """
     Extract the text of each page from a PDF given as raw bytes.
@@ -109,6 +141,17 @@ def extract_pages(pdf_bytes: bytes) -> List[Tuple[int, str]]:
         raise ValueError(
             "This PDF has no readable text (it may be a scanned image or use "
             "fonts we can't decode). Please upload a text-based PDF."
+        )
+
+    # SCOPE CHECK: CareRAG is for healthcare/insurance documents only. If the
+    # document doesn't contain enough health/insurance terms, reject it so
+    # unrelated files (e.g. a résumé) aren't indexed or answered from.
+    full_text = " ".join(text for (_page, text) in pages)
+    if not _looks_like_health_or_insurance(full_text):
+        raise ValueError(
+            "This doesn't look like a healthcare or insurance document. "
+            "Please upload something like a policy, bill, discharge summary, "
+            "or medical/insurance guidelines."
         )
 
     return pages

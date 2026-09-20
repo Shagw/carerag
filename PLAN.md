@@ -247,6 +247,16 @@ disappears from the user's list, but the row — and its documents and history �
 This keeps deletions reversible (clear `deleted_at`) and preserves data for audit/recovery, which is
 good practice for a healthcare-oriented app.
 
+### Scope check (healthcare/insurance documents only)
+
+CareRAG is meant for health/insurance documents, so on upload we reject unrelated files (e.g. a
+résumé). After extracting the text, `pdf_utils._looks_like_health_or_insurance()` counts how many
+DISTINCT terms from a curated list (`insurance`, `policy`, `claim`, `premium`, `hospital`,
+`diagnosis`, `discharge`, `reimbursement`, …) appear. If fewer than **3** distinct terms are found,
+`extract_pages` raises a `ValueError` with a friendly message, which the UI shows to the user. A real
+policy/bill hits many terms; an unrelated document hits ~0. This is a simple, free, transparent check
+(no extra API call); the term list and threshold are easy to tune.
+
 ---
 
 ## 7. Day-by-day task plan

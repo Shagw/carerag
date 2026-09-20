@@ -45,10 +45,23 @@ class _SharedConnection:
         return self._conn                     # give callers the real connection
 
     def __exit__(self, exc_type, exc, tb):
+        global _cached_conn
         if exc_type is None:
             self._conn.commit()               # success -> save
         else:
-            self._conn.rollback()             # error -> undo, but keep conn open
+            try:
+                self._conn.rollback()         # error -> undo, keep conn usable
+            except Exception:
+                pass
+            # If it's a prepared-statement clash (can happen with a pooled
+            # backend), throw this connection away so the NEXT get_connection()
+            # opens a clean one — self-healing.
+            if exc_type.__name__ == "DuplicatePreparedStatement":
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
+                _cached_conn = None
         return False                          # don't suppress exceptions
 
     # Let callers also use the object directly if they don't use `with`.

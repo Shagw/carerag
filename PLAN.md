@@ -183,6 +183,22 @@ sources       (JSON: which document + page + snippet we cited)
 created_at    (timestamp)
 ```
 
+**`owners`** — a lightweight "who" for the multi-chat workspace (no passwords).
+```
+id            (a random UUID — the KEY, kept in the URL as ?owner=...)
+name          (a friendly display label, e.g. "Saumya" — not unique, not a login)
+created_at    (timestamp)
+```
+
+**`chats`** — the list of named conversations, each belonging to an owner.
+```
+id            (a UUID — ALSO used as the session_id for that chat's documents/history)
+owner_id      (which owner/workspace this chat belongs to)
+name          (e.g. "Health Policy")
+created_at    (timestamp)
+deleted_at    (SOFT DELETE: set when removed; NULL = active. Row is never physically deleted)
+```
+
 Because it's **multiple documents**, supporting them is almost free: upload just adds more rows to
 `chunks`, and search looks across every chunk of the current session regardless of which document it
 came from. The citation carries the document name so the user sees exactly which file (and page)
@@ -211,6 +227,25 @@ So there are **two separate ideas** at query time, and they run in this order:
 The `session_id` lives in the page URL (`?session=...`) so a refresh keeps the same session. This is
 a no-login demo, so the isolation is convenience/privacy between sessions, not hard security —
 someone with your exact session URL could load it. That trade-off is documented in the README.
+
+### Multi-chat workspaces (owners + named conversations)
+
+On top of per-document isolation, the app groups everything into **workspaces**:
+
+- A visitor enters a **name** → we create an **owner** with a random UUID `id`, kept in the URL as
+  `?owner=...`. The id is the real key; the name is just a label. A fresh browser / incognito with no
+  owner id gets the name prompt and a brand-new empty workspace.
+- An owner has many **chats** (conversations). `list_chats(owner_id)` shows only that owner's chats.
+- Each chat's `id` **is** the `session_id` used for its documents and history — so every conversation
+  is its own isolated knowledge base automatically. Uploading in chat A never affects chat B.
+
+### Soft delete
+
+Deleting a conversation is a **soft delete**: `delete_chat(id)` sets `chats.deleted_at = now()`
+instead of removing the row. `list_chats` only returns rows where `deleted_at IS NULL`, so the chat
+disappears from the user's list, but the row — and its documents and history — stay in the database.
+This keeps deletions reversible (clear `deleted_at`) and preserves data for audit/recovery, which is
+good practice for a healthcare-oriented app.
 
 ---
 

@@ -25,7 +25,7 @@ from app.chunking import chunk_pages             # [(page, text)] -> [(page, chu
 from app.vector_store import save_chunks, list_documents  # store + list documents
 from app.rag import answer_question              # the full RAG pipeline
 from app.conversations import save_conversation, get_recent_history, get_full_history  # chat memory
-from app.chats import create_chat, list_chats, rename_chat  # multi-chat workspace
+from app.chats import create_chat, list_chats, rename_chat, delete_chat  # multi-chat workspace
 from app.owners import create_owner, get_owner  # workspace owners
 from app.models import (
     UploadResponse,
@@ -208,6 +208,16 @@ def rename_existing_chat(chat_id: str, request: RenameChatRequest):
     """Rename an existing chat."""
     rename_chat(chat_id, request.name)
     return ChatInfo(id=chat_id, name=request.name)
+
+
+@app.delete("/chats/{chat_id}")
+def delete_existing_chat(chat_id: str):
+    """
+    Soft-delete a chat: it's hidden from the list but its data is kept in the
+    database (nothing is physically removed).
+    """
+    delete_chat(chat_id)
+    return {"status": "deleted", "chat_id": chat_id}
 
 
 # ----------------------------------------------------------------------------

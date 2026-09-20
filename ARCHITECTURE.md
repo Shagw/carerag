@@ -89,6 +89,9 @@ question (+ session_id for memory)
 | `chunking.py`  | (page_no, text) list | (page_no, chunk) list | split into overlapping chunks |
 | `embeddings.py`| list of strings | list of 768-dim vectors | call the Gemini embedding API (batched) |
 | `vector_store.py` | chunks / query vector | DB writes / nearest chunks | all DB access for documents & chunks |
+| `conversations.py` | session_id, Q&A | history rows | save/load chat history (memory) |
+| `chats.py` | owner_id, chat id | chat rows | create/list/rename/soft-delete conversations |
+| `owners.py` | name / owner id | owner rows | create/look up workspace owners |
 | `key_manager.py` | – | an available API key | rotate up to 5 Gemini keys, cooldown on limit |
 | `llm.py` | prompt string | answer string | call Gemini (asks key_manager for a key) |
 | `rag.py` | question, history | answer + citations | orchestrate retrieve→guard→prompt→answer→cite |

@@ -175,7 +175,8 @@ def create_tables():
                     id         TEXT PRIMARY KEY,          -- the chat id (a UUID) = session_id elsewhere
                     owner_id   TEXT NOT NULL,             -- which owner (workspace) this chat belongs to
                     name       TEXT NOT NULL,             -- human-friendly name, e.g. "Health Policy"
-                    created_at TIMESTAMP DEFAULT now()
+                    created_at TIMESTAMP DEFAULT now(),
+                    deleted_at TIMESTAMP                  -- set when SOFT-deleted; NULL = active
                 );
                 """
             )
@@ -187,6 +188,11 @@ def create_tables():
                 ALTER TABLE chats
                 ADD COLUMN IF NOT EXISTS owner_id TEXT NOT NULL DEFAULT 'legacy';
                 """
+            )
+
+            # Add the soft-delete column if an older chats table lacks it.
+            cur.execute(
+                "ALTER TABLE chats ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP;"
             )
 
             # 7) owners table — a lightweight "who" for the multi-chat workspace.

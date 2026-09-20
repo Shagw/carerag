@@ -57,7 +57,7 @@ from app.chunking import chunk_pages
 from app.vector_store import save_chunks, list_documents
 from app.rag import answer_question
 from app.conversations import save_conversation, get_recent_history, get_full_history
-from app.chats import create_chat, list_chats, rename_chat
+from app.chats import create_chat, list_chats, rename_chat, delete_chat
 from app.owners import create_owner, get_owner
 
 
@@ -179,6 +179,20 @@ with st.sidebar:
         if new_name.strip():
             rename_chat(current_chat_id, new_name.strip())
             st.rerun()
+
+    st.divider()
+
+    # Delete the current conversation (soft delete). A confirm checkbox avoids
+    # accidental clicks. After deleting we clear the selection and rerun.
+    st.caption("Delete this conversation")
+    confirm = st.checkbox("Yes, remove it from my list", key=f"confirmdel_{current_chat_id}")
+    if st.button("🗑️ Delete conversation", use_container_width=True, disabled=not confirm):
+        delete_chat(current_chat_id)
+        # Clear selection + URL so we don't point at the deleted chat.
+        st.session_state.pop("chat_choice", None)
+        if "chat" in st.query_params:
+            del st.query_params["chat"]
+        st.rerun()
 
 # When the active chat CHANGES, reload that chat's history into the screen.
 # (This runs AFTER the radio, so current_chat_id is already the new chat.)

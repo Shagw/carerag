@@ -10,8 +10,9 @@
 #
 # Functions:
 #   create_chat(name, owner_id) -> new chat id
-#   list_chats(owner_id)        -> that owner's chats, newest first
+#   list_chats(owner_id)        -> that owner's ACTIVE chats, newest first
 #   rename_chat(id, name)
+#   delete_chat(id)             -> SOFT delete (hide from list, keep the data)
 # ============================================================================
 
 import uuid
@@ -36,13 +37,18 @@ def create_chat(name: str, owner_id: str) -> str:
 
 def list_chats(owner_id: str) -> List[Dict[str, Any]]:
     """
-    Return THIS owner's chats, newest first.
+    Return THIS owner's ACTIVE chats, newest first.
+    Soft-deleted chats (deleted_at IS NOT NULL) are excluded.
     Output: [{ "id": "uuid", "name": "Health Policy" }, ...]
     """
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, name FROM chats WHERE owner_id = %s ORDER BY created_at DESC;",
+                """
+                SELECT id, name FROM chats
+                WHERE owner_id = %s AND deleted_at IS NULL
+                ORDER BY created_at DESC;
+                """,
                 (owner_id,),
             )
             rows = cur.fetchall()
@@ -58,4 +64,19 @@ def rename_chat(chat_id: str, new_name: str) -> None:
             cur.execute(
                 "UPDATE chats SET name = %s WHERE id = %s;",
                 (new_name, chat_id),
+            )
+
+
+def delete_chat(chat_id: str) -> None:
+    """
+    SOFT-delete a chat: mark it deleted (set deleted_at = now) so it disappears
+    from the user's list, but keep the row AND its documents/history in the
+    database. Nothing is physically removed — this is reversible by clearing
+    deleted_at, and keeps data for audit/recovery.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE chats SET deleted_at = now() WHERE id = %s;",
+                (chat_id,),
             )

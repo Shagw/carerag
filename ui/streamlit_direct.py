@@ -43,6 +43,7 @@ from app.vector_store import save_chunks, list_documents
 from app.rag import answer_question
 from app.conversations import save_conversation, get_recent_history, get_full_history
 from app.chats import create_chat, list_chats, rename_chat
+from app.owners import create_owner, get_owner
 
 
 st.set_page_config(page_title="CareRAG", page_icon="🏥", layout="centered")
@@ -82,15 +83,39 @@ def ingest_file(uploaded_file, chat_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# OWNER (workspace) gate.
+# A visitor needs an owner id (kept in the URL as ?owner=...). If they don't
+# have a valid one yet, we ask their name and create a fresh owner. The owner
+# id — NOT the name — is the key that isolates their chats.
+# ---------------------------------------------------------------------------
+url_owner = st.query_params.get("owner")
+owner = get_owner(url_owner) if url_owner else None
+
+if owner is None:
+    # New visitor (or unknown owner id): show a friendly name prompt and stop.
+    st.title("🏥 CareRAG")
+    st.subheader("Welcome! What should we call you?")
+    st.caption("This creates your private workspace. Bookmark the URL that "
+               "appears afterward to come back to your chats.")
+    name = st.text_input("Your name")
+    if st.button("Start", disabled=not name.strip()):
+        new_owner_id = create_owner(name.strip())
+        st.query_params["owner"] = new_owner_id
+        st.rerun()
+    st.stop()   # don't render the rest until we have an owner
+
+owner_id = owner["id"]
+
 # Decide the active chat. We keep the current chat id in the URL (?chat=...)
 # so a refresh stays on the same chat.
 # ---------------------------------------------------------------------------
-chats = list_chats()
+chats = list_chats(owner_id)
 
-# If there are NO chats yet, create the first one automatically.
+# If this owner has NO chats yet, create the first one automatically.
 if not chats:
-    create_chat("New chat")
-    chats = list_chats()
+    create_chat("New chat", owner_id)
+    chats = list_chats(owner_id)
 
 valid_ids = [c["id"] for c in chats]
 names_by_id = {c["id"]: c["name"] for c in chats}
@@ -106,9 +131,10 @@ default_id = url_chat if url_chat in valid_ids else valid_ids[0]
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.header("💬 Your chats")
+    st.caption(f"Workspace: **{owner['name']}**")
 
     if st.button("➕ New chat", use_container_width=True):
-        new_id = create_chat("New chat")
+        new_id = create_chat("New chat", owner_id)
         st.query_params["chat"] = new_id
         st.rerun()
 

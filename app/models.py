@@ -88,6 +88,7 @@ class DocumentInfo(BaseModel):
 class CreateChatRequest(BaseModel):
     """Client sends this to create a new chat."""
     name: str = "New chat"          # default name if none provided
+    owner_id: str                   # which owner/workspace this chat belongs to
 
 
 class RenameChatRequest(BaseModel):
@@ -97,5 +98,20 @@ class RenameChatRequest(BaseModel):
 
 class ChatInfo(BaseModel):
     """One chat in the sidebar list."""
+    id: str
+    name: str
+
+
+# ----------------------------------------------------------------------------
+# Models for the /owners endpoints (workspace owner).
+# ----------------------------------------------------------------------------
+
+class CreateOwnerRequest(BaseModel):
+    """Client sends this to create a new owner (workspace) with a display name."""
+    name: str
+
+
+class OwnerInfo(BaseModel):
+    """An owner (workspace): the id is the key, the name is a friendly label."""
     id: str
     name: str

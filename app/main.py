@@ -26,6 +26,7 @@ from app.vector_store import save_chunks, list_documents  # store + list documen
 from app.rag import answer_question              # the full RAG pipeline
 from app.conversations import save_conversation, get_recent_history, get_full_history  # chat memory
 from app.chats import create_chat, list_chats, rename_chat  # multi-chat workspace
+from app.owners import create_owner, get_owner  # workspace owners
 from app.models import (
     UploadResponse,
     UploadedDocument,
@@ -36,6 +37,8 @@ from app.models import (
     CreateChatRequest,
     RenameChatRequest,
     ChatInfo,
+    CreateOwnerRequest,
+    OwnerInfo,
 )
 
 
@@ -189,15 +192,15 @@ def get_history(session_id: str):
 
 @app.post("/chats", response_model=ChatInfo)
 def create_new_chat(request: CreateChatRequest):
-    """Create a new named chat and return it (with its new id)."""
-    chat_id = create_chat(request.name)
+    """Create a new named chat under an owner and return it (with its new id)."""
+    chat_id = create_chat(request.name, request.owner_id)
     return ChatInfo(id=chat_id, name=request.name)
 
 
 @app.get("/chats", response_model=List[ChatInfo])
-def get_chats():
-    """List all chats (newest first) for the sidebar."""
-    return [ChatInfo(**chat) for chat in list_chats()]
+def get_chats(owner_id: str):
+    """List THIS owner's chats (newest first). e.g. /chats?owner_id=abc123"""
+    return [ChatInfo(**chat) for chat in list_chats(owner_id)]
 
 
 @app.patch("/chats/{chat_id}", response_model=ChatInfo)
@@ -205,3 +208,23 @@ def rename_existing_chat(chat_id: str, request: RenameChatRequest):
     """Rename an existing chat."""
     rename_chat(chat_id, request.name)
     return ChatInfo(id=chat_id, name=request.name)
+
+
+# ----------------------------------------------------------------------------
+# Owner (workspace) endpoints. An owner id is the key kept in the UI URL.
+# ----------------------------------------------------------------------------
+
+@app.post("/owners", response_model=OwnerInfo)
+def create_new_owner(request: CreateOwnerRequest):
+    """Create a new owner (workspace) with a display name; returns its new id."""
+    owner_id = create_owner(request.name)
+    return OwnerInfo(id=owner_id, name=request.name)
+
+
+@app.get("/owners/{owner_id}", response_model=OwnerInfo)
+def get_existing_owner(owner_id: str):
+    """Look up an owner by id (to validate it and show the name)."""
+    owner = get_owner(owner_id)
+    if owner is None:
+        raise HTTPException(status_code=404, detail="Owner not found.")
+    return OwnerInfo(**owner)

@@ -173,7 +173,30 @@ def create_tables():
                 """
                 CREATE TABLE IF NOT EXISTS chats (
                     id         TEXT PRIMARY KEY,          -- the chat id (a UUID) = session_id elsewhere
+                    owner_id   TEXT NOT NULL,             -- which owner (workspace) this chat belongs to
                     name       TEXT NOT NULL,             -- human-friendly name, e.g. "Health Policy"
+                    created_at TIMESTAMP DEFAULT now()
+                );
+                """
+            )
+
+            # If the chats table already existed WITHOUT owner_id (earlier
+            # version), add it now. Existing chats get a placeholder owner.
+            cur.execute(
+                """
+                ALTER TABLE chats
+                ADD COLUMN IF NOT EXISTS owner_id TEXT NOT NULL DEFAULT 'legacy';
+                """
+            )
+
+            # 7) owners table — a lightweight "who" for the multi-chat workspace.
+            #    An owner = one browser/workspace. Its id (a UUID) is the key kept
+            #    in the URL (?owner=...); the name is just a friendly label.
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS owners (
+                    id         TEXT PRIMARY KEY,          -- the owner id (a UUID) — the real key
+                    name       TEXT NOT NULL,             -- friendly display name (not unique)
                     created_at TIMESTAMP DEFAULT now()
                 );
                 """

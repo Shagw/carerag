@@ -81,17 +81,17 @@ def load_history_into_state(chat_id: str):
 
 
 def ingest_file(uploaded_file, chat_id: str) -> str:
-    """Extract -> chunk -> embed -> store one uploaded PDF for this chat."""
+    """Read a PDF and get it ready for questions. Returns a friendly message."""
     data = uploaded_file.getvalue()
     if len(data) > 10 * 1024 * 1024:
-        return f"'{uploaded_file.name}' is larger than 10 MB."
+        return f"'{uploaded_file.name}' is too large (over 10 MB). Please try a smaller file."
     try:
         pages = extract_pages(data)
     except ValueError as e:
-        return f"'{uploaded_file.name}': {e}"
+        return f"Couldn't read '{uploaded_file.name}': {e}"
     chunks = chunk_pages(pages)
     save_chunks(uploaded_file.name, chunks, chat_id)
-    return f"Stored '{uploaded_file.name}' ({len(chunks)} chunks)."
+    return f"Added '{uploaded_file.name}'. You can ask questions about it now."
 
 
 # ---------------------------------------------------------------------------
@@ -106,12 +106,12 @@ owner = get_owner(url_owner) if url_owner else None
 
 if owner is None:
     # New visitor (or unknown owner id): show a friendly name prompt and stop.
-    st.title("🏥 CareRAG")
-    st.subheader("Welcome! What should we call you?")
-    st.caption("This creates your private workspace. Bookmark the URL that "
-               "appears afterward to come back to your chats.")
+    st.title("🏥 CareRAG — Your Health Document Assistant")
+    st.subheader("Welcome! What's your name?")
+    st.caption("We'll set up a private space just for you. "
+               "Tip: save this page's web address (URL) so you can come back to your documents later.")
     name = st.text_input("Your name")
-    if st.button("Start", disabled=not name.strip()):
+    if st.button("Get started", disabled=not name.strip()):
         new_owner_id = create_owner(name.strip())
         st.query_params["owner"] = new_owner_id
         st.rerun()
@@ -142,11 +142,11 @@ default_id = url_chat if url_chat in valid_ids else valid_ids[0]
 # the freshly-selected chat in the SAME run — no one-rerun lag / stale lists.
 # ---------------------------------------------------------------------------
 with st.sidebar:
-    st.header("💬 Your chats")
-    st.caption(f"Workspace: **{owner['name']}**")
+    st.header("💬 Your conversations")
+    st.caption(f"Signed in as **{owner['name']}**")
 
-    if st.button("➕ New chat", use_container_width=True):
-        new_id = create_chat("New chat", owner_id)
+    if st.button("➕ Start a new conversation", use_container_width=True):
+        new_id = create_chat("New conversation", owner_id)
         st.session_state.chat_choice = new_id   # select the new chat in the radio
         st.query_params["chat"] = new_id
         st.rerun()
@@ -162,9 +162,9 @@ with st.sidebar:
         st.session_state.chat_choice = default_id
 
     current_chat_id = st.radio(
-        "Switch chat",
+        "Choose a conversation",
         options=valid_ids,
-        format_func=lambda cid: names_by_id.get(cid, "Chat"),
+        format_func=lambda cid: names_by_id.get(cid, "Conversation"),
         key="chat_choice",
     )
     # Keep the URL in sync with the radio (so a refresh stays on this chat).
@@ -173,9 +173,9 @@ with st.sidebar:
 
     st.divider()
 
-    st.caption("Rename this chat")
+    st.caption("Rename this conversation")
     new_name = st.text_input("New name", value=names_by_id.get(current_chat_id, ""))
-    if st.button("Rename", use_container_width=True):
+    if st.button("Save name", use_container_width=True):
         if new_name.strip():
             rename_chat(current_chat_id, new_name.strip())
             st.rerun()
@@ -191,30 +191,32 @@ if st.session_state.get("active_chat_id") != current_chat_id:
 # Main area: title, in-chat upload + this chat's documents, then the chat.
 # ---------------------------------------------------------------------------
 st.title("🏥 CareRAG")
-st.caption(f"Chat: **{names_by_id.get(current_chat_id, 'New chat')}** — "
-           "upload documents and ask questions. Answers cite their source page.")
+st.caption(f"Conversation: **{names_by_id.get(current_chat_id, 'New conversation')}** — "
+           "add your health or insurance documents, then ask questions in plain English. "
+           "Each answer shows which document and page it came from.")
 
-with st.expander("📎 Add documents to this chat", expanded=not st.session_state.messages):
+with st.expander("📎 Add documents to this conversation", expanded=not st.session_state.messages):
     uploaded = st.file_uploader(
-        "Upload PDF(s) for this chat", type=["pdf"], accept_multiple_files=True,
+        "Choose PDF file(s) — e.g. a policy, bill, or discharge summary",
+        type=["pdf"], accept_multiple_files=True,
         key=f"uploader_{current_chat_id}",   # unique per chat → resets on switch
     )
-    if st.button("Upload to this chat", disabled=not uploaded, key=f"uploadbtn_{current_chat_id}"):
-        with st.spinner("Reading, chunking, and embedding..."):
+    if st.button("Add these documents", disabled=not uploaded, key=f"uploadbtn_{current_chat_id}"):
+        with st.spinner("Reading your documents and getting them ready... this can take a moment."):
             for f in uploaded:
                 msg = ingest_file(f, current_chat_id)
-                (st.success if msg.startswith("Stored") else st.error)(msg)
+                (st.success if msg.startswith("Added") else st.error)(msg)
 
     try:
         docs = list_documents(current_chat_id)
     except Exception:
         docs = []
     if docs:
-        st.write("In this chat:")
+        st.write("Documents in this conversation:")
         for d in docs:
-            st.write(f"• {d['filename']}  ({d['chunk_count']} chunks)")
+            st.write(f"• {d['filename']}")
     else:
-        st.info("No documents in this chat yet.")
+        st.info("No documents added yet. Add a PDF above to get started.")
 
 st.divider()
 
@@ -223,10 +225,10 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
         for source in message.get("sources", []):
-            with st.expander(f"📄 {source['filename']} — page {source['page_number']}"):
+            with st.expander(f"📄 Source: {source['filename']} — page {source['page_number']}"):
                 st.write(source["snippet"])
 
-question = st.chat_input("Ask a question about this chat's documents...")
+question = st.chat_input("Type your question here...")
 
 if question:
     st.session_state.messages.append({"role": "user", "content": question})
@@ -234,15 +236,16 @@ if question:
         st.write(question)
 
     with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
+        with st.spinner("Looking through your documents..."):
             try:
                 history = get_recent_history(current_chat_id, limit=5)
                 result = answer_question(question, session_id=current_chat_id, history=history)
                 answer = result["answer"]
                 sources = result["sources"]
                 save_conversation(current_chat_id, question, answer, sources)
-            except Exception as e:
-                answer = f"Something went wrong: {e}"
+            except Exception:
+                answer = ("Sorry, something went wrong while answering. "
+                          "Please try again in a moment.")
                 sources = []
 
         st.write(answer)

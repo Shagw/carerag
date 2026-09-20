@@ -89,25 +89,20 @@ chats = list_chats()
 
 # If there are NO chats yet, create the first one automatically.
 if not chats:
-    first_id = create_chat("New chat")
+    create_chat("New chat")
     chats = list_chats()
 
-current_chat_id = st.query_params.get("chat")
 valid_ids = [c["id"] for c in chats]
-if current_chat_id not in valid_ids:
-    current_chat_id = chats[0]["id"]
-    st.query_params["chat"] = current_chat_id
-
 names_by_id = {c["id"]: c["name"] for c in chats}
 
-# When the selected chat CHANGES, reload that chat's history into the screen.
-if st.session_state.get("active_chat_id") != current_chat_id:
-    st.session_state.active_chat_id = current_chat_id
-    load_history_into_state(current_chat_id)
-
+# Which chat should be pre-selected? Prefer the one in the URL, else the first.
+url_chat = st.query_params.get("chat")
+default_id = url_chat if url_chat in valid_ids else valid_ids[0]
 
 # ---------------------------------------------------------------------------
-# Sidebar: chat list + new chat + rename current chat.
+# Sidebar: chat list (the radio is the SINGLE SOURCE OF TRUTH for the active
+# chat) + new chat + rename. We render this FIRST so the rest of the page uses
+# the freshly-selected chat in the SAME run — no one-rerun lag / stale lists.
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.header("💬 Your chats")
@@ -119,15 +114,15 @@ with st.sidebar:
 
     st.divider()
 
-    selected = st.radio(
+    current_chat_id = st.radio(
         "Switch chat",
         options=valid_ids,
-        index=valid_ids.index(current_chat_id),
+        index=valid_ids.index(default_id),
         format_func=lambda cid: names_by_id.get(cid, "Chat"),
     )
-    if selected != current_chat_id:
-        st.query_params["chat"] = selected
-        st.rerun()
+    # Keep the URL in sync with the radio (so a refresh stays on this chat).
+    if st.query_params.get("chat") != current_chat_id:
+        st.query_params["chat"] = current_chat_id
 
     st.divider()
 
@@ -137,6 +132,12 @@ with st.sidebar:
         if new_name.strip():
             rename_chat(current_chat_id, new_name.strip())
             st.rerun()
+
+# When the active chat CHANGES, reload that chat's history into the screen.
+# (This runs AFTER the radio, so current_chat_id is already the new chat.)
+if st.session_state.get("active_chat_id") != current_chat_id:
+    st.session_state.active_chat_id = current_chat_id
+    load_history_into_state(current_chat_id)
 
 
 # ---------------------------------------------------------------------------
@@ -148,9 +149,10 @@ st.caption(f"Chat: **{names_by_id.get(current_chat_id, 'New chat')}** — "
 
 with st.expander("📎 Add documents to this chat", expanded=not st.session_state.messages):
     uploaded = st.file_uploader(
-        "Upload PDF(s) for this chat", type=["pdf"], accept_multiple_files=True
+        "Upload PDF(s) for this chat", type=["pdf"], accept_multiple_files=True,
+        key=f"uploader_{current_chat_id}",   # unique per chat → resets on switch
     )
-    if st.button("Upload to this chat", disabled=not uploaded):
+    if st.button("Upload to this chat", disabled=not uploaded, key=f"uploadbtn_{current_chat_id}"):
         with st.spinner("Reading, chunking, and embedding..."):
             for f in uploaded:
                 msg = ingest_file(f, current_chat_id)

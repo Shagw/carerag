@@ -122,11 +122,22 @@ owner_id = owner["id"]
 # Decide the active chat. We keep the current chat id in the URL (?chat=...)
 # so a refresh stays on the same chat.
 # ---------------------------------------------------------------------------
+
+# If we just deleted a conversation on the previous run, reset the selection
+# HERE (before the radio widget is created) so we don't point at the deleted
+# chat. Doing it here — not inline in the button — avoids Streamlit errors from
+# mutating a live widget's key.
+if st.session_state.pop("_just_deleted", False):
+    st.session_state.pop("chat_choice", None)   # safe now: radio not yet created
+    if "chat" in st.query_params:
+        del st.query_params["chat"]
+
 chats = list_chats(owner_id)
 
-# If this owner has NO chats yet, create the first one automatically.
+# If this owner has NO chats yet (including right after deleting the last one),
+# create a fresh one automatically so there's always somewhere to work.
 if not chats:
-    create_chat("New chat", owner_id)
+    create_chat("New conversation", owner_id)
     chats = list_chats(owner_id)
 
 valid_ids = [c["id"] for c in chats]
@@ -183,15 +194,14 @@ with st.sidebar:
     st.divider()
 
     # Delete the current conversation (soft delete). A confirm checkbox avoids
-    # accidental clicks. After deleting we clear the selection and rerun.
+    # accidental clicks. We do the actual delete here, then set a flag and
+    # rerun — the flag is handled at the TOP of the next run (before the radio
+    # widget is created), which is the safe place to reset the selection.
     st.caption("Delete this conversation")
     confirm = st.checkbox("Yes, remove it from my list", key=f"confirmdel_{current_chat_id}")
     if st.button("🗑️ Delete conversation", use_container_width=True, disabled=not confirm):
         delete_chat(current_chat_id)
-        # Clear selection + URL so we don't point at the deleted chat.
-        st.session_state.pop("chat_choice", None)
-        if "chat" in st.query_params:
-            del st.query_params["chat"]
+        st.session_state["_just_deleted"] = True
         st.rerun()
 
 # When the active chat CHANGES, reload that chat's history into the screen.

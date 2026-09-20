@@ -185,9 +185,16 @@ with st.sidebar:
     st.divider()
 
     st.caption("Rename this conversation")
-    new_name = st.text_input("New name", value=names_by_id.get(current_chat_id, ""))
+    # Chat-scoped key so the box shows the CURRENT chat's name and resets when
+    # you switch chats. We seed the box's value once per chat via session_state
+    # (setting value= every run fights Streamlit's own widget state and made a
+    # second rename not register).
+    rename_key = f"rename_{current_chat_id}"
+    if rename_key not in st.session_state:
+        st.session_state[rename_key] = names_by_id.get(current_chat_id, "")
+    new_name = st.text_input("New name", key=rename_key)
     if st.button("Save name", use_container_width=True):
-        if new_name.strip():
+        if new_name.strip() and new_name.strip() != names_by_id.get(current_chat_id, ""):
             rename_chat(current_chat_id, new_name.strip())
             st.rerun()
 
